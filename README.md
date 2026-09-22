@@ -102,13 +102,26 @@ routes; it adds nothing.
 
 | | off (default) | on |
 |---|---|---|
-| Local shell, node shell, assistant | served | **not registered** — the address answers 404, not a refusal |
+| Local shell, node shell, assistant | served | **not registered** — the address answers what a path that never existed answers, not a refusal |
 | Pod exec, port-forward, everything else | served | served |
 | `/api/capabilities` `mode` | `container` | `server` |
 
-Measured on Docker Desktop, 2026-09-22: with it on, `POST /api/dock/terminals`
-answers `no operation at POST /api/dock/terminals` — the router's own miss, not a
-handler declining. `kubectl exec` is then the only shell into the pod, bounded by
+**"What a path that never existed answers" is not one status**, and the
+difference is worth knowing before you go looking. Measured on Docker Desktop,
+2026-09-22, against a pod running the profile, with controls:
+
+| | `/api/…` | `/kt-api/…` |
+|---|---|---|
+| `GET` | 404, `application/problem+json` | **200 `text/html`, the single-page shell** |
+| `POST` | 404 | 405 |
+
+Byte-identical to `/definitely-not-a-route` in every cell. The `/kt-api/` paths
+are not under the API mount, so they fall through to the console's own
+single-page handler — **so a `200` there is the removal working, not failing.**
+
+And the control that makes the rest mean anything: `/api/c/<cluster>/ws/exec`
+answers `400 namespace and pod must be Kubernetes names`, from its own handler.
+The 404s are the router holding nothing, not the surface being down. `kubectl exec` is then the only shell into the pod, bounded by
 your RBAC rather than by the console's own switches.
 
 **Turning it on does not make the console multi-user.** It makes it smaller. One

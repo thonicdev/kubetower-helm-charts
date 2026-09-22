@@ -55,8 +55,10 @@ spec:
             {{- if .Values.serverProfile }}
             # The server profile. It does not configure the console, it
             # makes it smaller: the local shell, the node shell and the
-            # assistant are not registered at all, so those addresses answer the
-            # ordinary 404 rather than a handler that refuses.
+            # assistant are not registered at all, so each address answers
+            # exactly what a path that never existed answers - 404 under /api/,
+            # the single-page shell under /kt-api/ - rather than a handler that
+            # refuses. Not one status: /kt-api/ is not under the API mount.
             #
             # **Until it is set, this chart deploys the single-user console in a
             # pod** — everyone who signs in shares one identity and the console
