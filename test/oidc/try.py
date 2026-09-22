@@ -94,4 +94,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("http://localhost:5555  ->  " + ISSUER)
     webbrowser.open("http://localhost:5555")
-    http.server.HTTPServer(("127.0.0.1", 5555), Handler).serve_forever()
+    # Threading, and it is not a refinement. A browser holds its connection open
+    # between requests, so the single-threaded HTTPServer stops answering
+    # everything else the moment a tab is pointed at it - which looked exactly
+    # like the fixture being down, measured 2026-09-22.
+    http.server.ThreadingHTTPServer(("127.0.0.1", 5555), Handler).serve_forever()
