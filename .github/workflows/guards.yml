@@ -1,0 +1,67 @@
+# The gates Claude-global.md requires. Copy into a PRODUCT repository as
+# .github/workflows/guards.yml
+#
+# claude-plugins and kubetower-docs are exempt from R1 and MUST NOT run the
+# attribution job - see rules/ATTRIBUTION.md. They still run the R2 jobs.
+name: guards
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  attribution:
+    name: R1 - no machine attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse machine attribution in the commit range
+        run: |
+          range="origin/${{ github.base_ref }}..HEAD"
+          if git log --format='%B' "$range" \
+             | grep -inE 'co-authored-by:.*(claude|anthropic)|generated with .*claude'; then
+            echo "::error::R1 - machine attribution in the commit range"
+            exit 1
+          fi
+      - name: Report every author and committer in the range
+        run: git log --format='%an <%ae>%n%cn <%ce>' "origin/${{ github.base_ref }}..HEAD" | sort -u
+
+  commits:
+    name: R2 - conventional commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      - name: Lint the commit range
+        run: npx commitlint --from "origin/${{ github.base_ref }}" --to HEAD --verbose
+
+  pr-title:
+    name: R2 - conventional PR title
+    runs-on: ubuntu-latest
+    steps:
+      # Without this the config file is absent and commitlint fails on every
+      # title, valid ones included - "Please add rules to your
+      # commitlint.config.js". A job that cannot pass is not a check.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      # A squash merge takes the PR title as the commit subject, so a repository
+      # that lints only commits has an unenforced convention that looks enforced.
+      # Runs on `edited` too: a title changed after a green check is otherwise
+      # never re-checked.
+      - name: Lint the pull-request title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s' "$TITLE" | npx commitlint --verbose
