@@ -3,11 +3,13 @@
 # ---------------------------------------------------------------------------
 # READ THIS FIRST
 #
-# This chart deploys the console's **desktop profile** on a remote machine that
-# happens to be a Kubernetes pod. It is not the shared in-cluster mode. The
-# binary has one profile: `grep -rn 'InClusterConfig' --include=*.go .` in
-# thonicdev/kubetower returns 0 lines, and `--incluster` is not a flag it
-# accepts. Everything that follows from that:
+# By default this chart deploys the console's **desktop profile** on a remote
+# machine that happens to be a Kubernetes pod. `serverProfile: true` below
+# passes `--incluster`, which the console accepts since kubetower#34 and which
+# removes the local shell, the node shell and the assistant. Neither setting
+# makes it a shared multi-user console: the binary still has no per-user
+# identity and no in-cluster client of its own (`InClusterConfig` appears in no
+# non-test file). Everything that follows from that:
 #
 #   * One password, one session, one identity. There are no users.
 #   * A terminal in the console runs `kubectl` **as this pod's

@@ -126,8 +126,9 @@ your RBAC rather than by the console's own switches.
 
 **Turning it on does not make the console multi-user.** It makes it smaller. One
 password and one session are still shared, so the warning above stands either
-way. It is off by default only because the console on `main` does not accept the
-flag yet.
+way. It is off by default today; the console accepts the flag since
+kubetower#34, so whether an in-cluster chart should default it **on** is an open
+question rather than a technical limit.
 
 ## The OIDC fixture
 
