@@ -1,0 +1,57 @@
+# What a red cross here means: the chart would install something different from
+# what it says it installs.
+#
+# It does not install anything. Nothing in this workflow reaches a cluster, so
+# nothing here proves the chart works - only that it renders, and that what it
+# renders does not grant more than the README claims. The install path is tested
+# by hand against a real cluster, and that is stated rather than implied.
+name: chart
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint and template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      # The defaults are what most people install, so they are linted first and
+      # on their own - a failure here is a failure for everybody.
+      - name: Lint the defaults
+        run: helm lint ./charts/kubetower
+
+      # And every dangerous toggle on, because a template that only renders in
+      # its default shape has whole branches nothing has ever parsed.
+      - name: Lint with every toggle on
+        run: |
+          helm lint ./charts/kubetower \
+            --set rbac.write=true --set rbac.exec=true --set rbac.nodeProxy=true \
+            --set rbac.customResources=true --set rbac.readSecrets=true \
+            --set rbac.metrics=true --set serverProfile=true \
+            --set ingress.enabled=true --set ingress.hosts[0].host=example.test
+
+      # `helm lint` does not parse what it renders; it can pass on a template
+      # that produces invalid YAML. This is the parse.
+      - name: The rendered manifests are valid YAML
+        run: |
+          helm template kubetower ./charts/kubetower --set serverProfile=true \
+            | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
+
+  rbac:
+    name: the ClusterRole grants nothing it should not
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: pip install pyyaml
+      # --self-test first: it refuses a deliberately bad role and fails the job
+      # if it does not. A checker nobody has seen fail is a checker nobody knows
+      # is connected.
+      - run: python test/rbac-check.py --self-test
