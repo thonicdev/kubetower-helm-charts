@@ -22,6 +22,24 @@ one user as far as the cluster is concerned.
 {{- end }}
 
 2. SIGN IN
+{{- if .Values.auth.oidc.issuer }}
+
+   With single sign-on, through {{ .Values.auth.oidc.issuer }}: the sign-in page
+   offers "Sign in with SSO". The provider must list this redirect URI for
+   client {{ .Values.auth.oidc.clientID }}, byte for byte:
+
+     {{ .Values.auth.oidc.redirectURL }}
+
+   If the provider is unreachable the console still starts, and the sign-in
+   page says the provider is unavailable and why.
+{{- if not .Values.auth.localAccount }}
+
+   There is NO shared password (auth.localAccount is false): its routes are
+   not registered and none is drawn. If the provider never comes back, the way
+   in is `helm upgrade ... --set auth.localAccount=true`.
+{{- end }}
+{{- end }}
+{{- if or (not .Values.auth.oidc.issuer) .Values.auth.localAccount }}
 
    User: {{ .Values.auth.user }}
 {{ if .Values.auth.existingSecret }}
@@ -36,6 +54,13 @@ one user as far as the cluster is concerned.
 
    It is printed once. {{ if .Values.persistence.enabled }}It is kept in the PersistentVolumeClaim, so a restart
    keeps it.{{ else }}persistence is OFF, so a restart draws a NEW one and the old is gone.{{ end }}
+{{- end }}
+{{- if .Values.auth.oidc.issuer }}
+
+   auth.localAccount is ON: this password bypasses the identity provider, and
+   the console's write log records its user as `via=password` - nobody in
+   particular.
+{{- end }}
 {{- end }}
 
 3. WHAT WORKS AND WHAT DOES NOT, WITH THESE VALUES
@@ -61,7 +86,13 @@ one user as far as the cluster is concerned.
    Do not. What makes this single-user is open work:
 
      * the port-forward cap is per process - 16 forwards for everybody at once
+{{- if .Values.auth.oidc.issuer }}
+     * people sign in as themselves, and each has a session of their own - but
+       the console does not yet ask the cluster what a person may do, so every
+       one of them acts as this pod's ServiceAccount
+{{- else }}
      * the session is stateless - revoking one person signs out all of them
+{{- end }}
 {{- if .Values.serverProfile }}
      * (closed here) the local shell, the node shell and the assistant have no
        route at all under serverProfile
