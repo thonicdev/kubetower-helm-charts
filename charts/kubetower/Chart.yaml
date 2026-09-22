@@ -1,0 +1,31 @@
+apiVersion: v2
+name: kubetower
+description: >-
+  The KubeTower console, in a pod. This is the desktop profile deployed
+  remotely - one process, one password, one operator - and NOT the shared
+  in-cluster mode, which does not exist in the binary yet.
+type: application
+
+# The chart's own version. It is not the console's.
+version: 0.1.0
+
+# What this chart was written against. `kubetower` carries no git tag, so a
+# binary built from the tree reports `dev` - there is no released version to
+# name here and pretending otherwise would put a number in a report.
+appVersion: "0.0.0-dev"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/thonicdev/kubetower
+sources:
+  - https://github.com/thonicdev/kubetower
+
+keywords:
+  - kubernetes
+  - console
+  - kubetower
+
+annotations:
+  # Read this before installing anywhere that more than one person can reach.
+  thonicdev.com/profile: "desktop"
+  thonicdev.com/shared-safe: "false"

@@ -1,0 +1,24 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kubetower.fullname" . }}-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+  annotations:
+    # Kept when the release is uninstalled, because it holds the drawn
+    # password's hash: deleting it silently changes the credential on the next
+    # install, and "my password stopped working" is a worse failure than a
+    # stray 1Gi volume. `kubectl delete pvc` is the deliberate act.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

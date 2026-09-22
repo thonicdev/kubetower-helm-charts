@@ -1,0 +1,56 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+Off by default, and the default is the recommendation.
+
+What an Ingress in front of this actually publishes: a process holding a
+ServiceAccount that can read the whole cluster, behind a single shared
+password, with a stateless session cookie that cannot be revoked except by
+rotating KT_SESSION_SECRET and signing everybody out. The binary has no
+per-user identity - there is nothing here to put an OIDC proxy's assertion
+into.
+
+If it is on, it wants TLS and something in front that authenticates. The chart
+will not do either for you.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+  annotations:
+    # The console's terminal, log stream, Claude control and port-forwards are
+    # all long-lived WebSocket connections. An ingress controller's default
+    # read timeout - 60s on ingress-nginx - closes an idle shell, so it is
+    # raised here rather than left to be discovered from a terminal that dies
+    # every minute.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "kubetower.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
