@@ -1,8 +1,10 @@
-# The gates Claude-global.md requires. Copy into a PRODUCT repository as
-# .github/workflows/guards.yml
+# Two gates over every pull request: no machine attribution in the history, and
+# Conventional Commits on the messages and on the title.
 #
-# claude-plugins and kubetower-docs are exempt from R1 and MUST NOT run the
-# attribution job - see rules/ATTRIBUTION.md. They still run the R2 jobs.
+# The attribution job exists because this project is dual-licensed, which is
+# lawful only while the copyright holder is the sole author - so the git history
+# is the record that argument is made from, and a machine co-author trailer
+# inserts a non-signatory party into exactly that record.
 name: guards
 on:
   pull_request:
