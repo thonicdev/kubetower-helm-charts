@@ -60,9 +60,9 @@ spec:
             # the single-page shell under /kt-api/ - rather than a handler that
             # refuses. Not one status: /kt-api/ is not under the API mount.
             #
-            # **Until it is set, this chart deploys the single-user console in a
-            # pod** — everyone who signs in shares one identity and the console
-            # offers a shell holding this pod's ServiceAccount.
+            # **On by default.** Set false, this chart deploys the single-user
+            # console in a pod, and the console offers a shell holding this
+            # pod's ServiceAccount.
             - --incluster
             {{- end }}
           ports:

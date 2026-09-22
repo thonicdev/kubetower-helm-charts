@@ -3,11 +3,11 @@
 # ---------------------------------------------------------------------------
 # READ THIS FIRST
 #
-# By default this chart deploys the console's **desktop profile** on a remote
-# machine that happens to be a Kubernetes pod. `serverProfile: true` below
-# passes `--incluster`, which the console accepts since kubetower#34 and which
-# removes the local shell, the node shell and the assistant. Neither setting
-# makes it a shared multi-user console: the binary still has no per-user
+# By default this chart deploys the console's **server profile**:
+# `serverProfile: true` below passes `--incluster`, which removes the local
+# shell, the node shell and the assistant. Setting it false deploys the desktop
+# profile on a machine that happens to be a pod, shell included. Neither
+# setting makes it a shared multi-user console: the binary still has no per-user
 # identity and no in-cluster client of its own (`InClusterConfig` appears in no
 # non-test file). Everything that follows from that:
 #
@@ -126,10 +126,15 @@ rbac:
 # than existing and refusing, which is the difference between a property of the
 # router and a property of one code path.
 #
-# Off by default while per-user identity is still open work: the profile
-# makes the console smaller, it does not yet make it multi-user. A deployment
+# **On by default since 2026-09-22.** An in-cluster chart deploying the
+# desktop profile had it the wrong way round: the shell it kept is a shell
+# holding this pod's ServiceAccount, which reads every Secret the role allows
+# whatever the rbac switches say. Off is still available and is now the
+# decision somebody types.
+#
+# It makes the console smaller; it does not make it multi-user. A deployment
 # shared between people still shares one password and one session.
-serverProfile: false
+serverProfile: true
 
 auth:
   # The user name on the login form.

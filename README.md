@@ -97,10 +97,11 @@ for.
 
 ## The server profile
 
-`--set serverProfile=true` passes `--incluster` to the console. It **removes**
-routes; it adds nothing.
+`serverProfile` passes `--incluster` to the console, and it is **on by
+default**. It **removes** routes; it adds nothing. `--set serverProfile=false`
+deploys the desktop profile instead, shell included.
 
-| | off (default) | on |
+| | off | on (default) |
 |---|---|---|
 | Local shell, node shell, assistant | served | **not registered** — the address answers what a path that never existed answers, not a refusal |
 | Pod exec, port-forward, everything else | served | served |
@@ -126,9 +127,8 @@ your RBAC rather than by the console's own switches.
 
 **Turning it on does not make the console multi-user.** It makes it smaller. One
 password and one session are still shared, so the warning above stands either
-way. It is off by default today; the console accepts the flag since
-kubetower#34, so whether an in-cluster chart should default it **on** is an open
-question rather than a technical limit.
+way. It is on by default because the alternative was the wrong way round: the
+shell the desktop profile keeps is a shell holding this pod's ServiceAccount.
 
 ## The OIDC fixture
 
