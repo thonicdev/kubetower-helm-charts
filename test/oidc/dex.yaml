@@ -1,16 +1,22 @@
-# Dex, as a development fixture for KubeTower's single sign-on work.
-#
-# It proves nothing about KubeTower today: the console has no OIDC code. This
-# exists so that work is written against a real issuer, a real JWKS and a real
-# groups claim instead of a mock.
+# Dex, as a development fixture for KubeTower's single sign-on work: a real
+# issuer, a real JWKS and a real groups claim instead of a mock.
 #
 # THE ISSUER IS THE TRAP. A token's `iss` must be the same string the console
-# used for discovery, and in a cluster the browser and the server see different
-# addresses. This fixture picks the pair that agree: `localhost:5556`, reached by
-# `kubectl port-forward`, with the console running on the host (`task dev`).
-# Testing against the in-cluster console instead needs the discovery URL and the
-# issuer to be configurable separately - which is itself a requirement that work
-# has to carry.
+# used for discovery, and in a cluster the browser and the pod see different
+# addresses. This fixture picks one string that both can reach on Docker
+# Desktop: `host.docker.internal`, which resolves on the host (to its own
+# address) and inside the cluster (to the host gateway). Both then reach the
+# host's port 5556, where a port-forward puts Dex:
+#
+#     kubectl --context docker-desktop -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
+#
+# `--address 0.0.0.0` because the browser dials the host's own address, not
+# loopback. That publishes the fixture on the host's network while the
+# port-forward runs. Its users and client secret are the public ones below, so
+# stop the port-forward when you are done.
+#
+# A console configured with this issuer needs no separate discovery URL here.
+# Where the two addresses really differ, it has KT_OIDC_DISCOVERY_URL for that.
 apiVersion: v1
 kind: Namespace
 metadata: {name: dex}
@@ -20,7 +26,7 @@ kind: ConfigMap
 metadata: {name: dex, namespace: dex}
 data:
   config.yaml: |
-    issuer: http://localhost:5556/dex
+    issuer: http://host.docker.internal:5556/dex
     storage: {type: memory}
     web: {http: 0.0.0.0:5556}
     oauth2:
@@ -43,9 +49,13 @@ data:
           # try.py, the throwaway client beside this file. It is first because it
           # is the only redirect URI anything actually listens on today.
           - http://localhost:5555/callback
-          - http://localhost:5173/auth/callback
-          - http://127.0.0.1:8824/auth/callback
-          - http://127.0.0.1:5824/auth/callback
+          # The console's callback, at the addresses it is reached on in
+          # development: the in-cluster release through
+          # `kubectl port-forward svc/kubetower 8824:5823`, and the host loop.
+          # The path is the console's own (`/api/auth/oidc/callback`), and a
+          # provider compares the whole URI byte for byte.
+          - http://127.0.0.1:8824/api/auth/oidc/callback
+          - http://127.0.0.1:5823/api/auth/oidc/callback
     enablePasswordDB: true
     # Two people in different groups, which is the whole point: the mapping
     # KubeTower needs is a RoleBinding to one of these group names.

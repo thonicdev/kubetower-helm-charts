@@ -1,11 +1,12 @@
 """A throwaway OIDC client, so the Dex fixture can be tried in a browser.
 
-It is not a KubeTower component and never will be. The console has no OIDC code
-yet; this exists so the question that work has to answer - *what does a real
-id_token from a real issuer actually carry* - has a measured answer instead of an
-assumed one.
+It is not a KubeTower component and never will be. It was written before the
+console could sign in through a provider, so that *what does a real id_token
+from a real issuer actually carry* had a measured answer instead of an assumed
+one. It stays as the quickest way to see a raw token's claims: the console
+verifies tokens and keeps none, so it never shows one.
 
-    kubectl --context docker-desktop -n dex port-forward svc/dex 5556:5556
+    kubectl --context docker-desktop -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
     python test/oidc/try.py          # then open http://localhost:5555
 
 Pick **Mock** on Dex's login screen to see a `groups` claim, or **Email**
@@ -21,7 +22,8 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-ISSUER = "http://localhost:5556/dex"
+# The fixture's issuer, which the host and the cluster both resolve. See dex.yaml.
+ISSUER = "http://host.docker.internal:5556/dex"
 CLIENT_ID = "kubetower"
 CLIENT_SECRET = "kubetower-dev-secret"
 REDIRECT = "http://localhost:5555/callback"
