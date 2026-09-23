@@ -94,6 +94,15 @@ rbac:
   # `secrets`, because the Config > Secrets page and the Helm release list both
   # read them. If that is not acceptable, set readSecrets: false and accept
   # that those two pages report a denial.
+  #
+  # **Every Secret includes this release's own**, which holds the session key
+  # and any password hash. Anybody who can sign in can read the key from the
+  # Secrets page and mint a session cookie of their own - one that survives a
+  # password change and ends only when the key is rotated. A ClusterRole
+  # cannot grant every Secret but one, so the chart does not pretend to: turn
+  # readSecrets off, or bind a narrower role of your own instead. With
+  # auth.oidc set, a minted session can carry any name, so the console's
+  # record of who did what is only as good as that Secret is unread.
   read: true
   readSecrets: true
 
@@ -106,6 +115,12 @@ rbac:
 
   # create/update/patch/delete on workloads and config. Off. With this on, the
   # console's edit and delete buttons work - for everyone who can sign in.
+  #
+  # **Treat it as cluster-admin.** It grants `create` on pods, Secrets and
+  # ServiceAccounts in every namespace. A pod can run as any ServiceAccount in
+  # its namespace, so creating one borrows that account's rights - including
+  # those of the controllers in kube-system. That is not a flaw in this list;
+  # it is what "can create pods everywhere" means in Kubernetes.
   write: false
 
   # pods/exec and pods/portforward. Off. With this on, anybody with the
@@ -115,6 +130,10 @@ rbac:
 
   # nodes/proxy, which the kubelet-stats page uses for per-node usage where
   # there is no metrics-server. It is a proxy to every kubelet's API. Off.
+  #
+  # Only `get` is granted, and that is still enough to reach the kubelet's
+  # own API; Kubernetes' RBAC guidance says access to nodes/proxy allows
+  # running commands in any pod on the node. Treat it as a shell on every node.
   nodeProxy: false
 
   # metrics.k8s.io, for the CPU and memory columns. Harmless and useful, but it
@@ -181,6 +200,14 @@ auth:
   # **Environment, never authorisation.** These values say who a person is. What
   # they may do is the cluster's RBAC, and this chart maps no group to any right:
   # a group reaches a right through a RoleBinding the cluster's owner writes.
+  #
+  # **Everybody the provider will issue a token to for this client is
+  # admitted, with the pod's full rights.** The console keeps no list of who
+  # may sign in, and until it asks the cluster what each person may do, every
+  # one of them acts as the pod's ServiceAccount - which, with the default
+  # readSecrets, reads every Secret in the cluster. Restrict who may use this
+  # client at the provider: an application assignment, a group condition on
+  # the client, or a provider that knows only the people meant to get in.
   oidc:
     # The provider's identity, and the exact string every token's `iss` must
     # equal. The browser is sent to the authorization endpoint its discovery
