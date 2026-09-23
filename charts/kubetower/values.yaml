@@ -100,7 +100,9 @@ rbac:
   # Secrets page and mint a session cookie of their own - one that survives a
   # password change and ends only when the key is rotated. A ClusterRole
   # cannot grant every Secret but one, so the chart does not pretend to: turn
-  # readSecrets off, or bind a narrower role of your own instead.
+  # readSecrets off, or bind a narrower role of your own instead. With
+  # auth.oidc set, a minted session can carry any name, so the console's
+  # record of who did what is only as good as that Secret is unread.
   read: true
   readSecrets: true
 
@@ -198,6 +200,14 @@ auth:
   # **Environment, never authorisation.** These values say who a person is. What
   # they may do is the cluster's RBAC, and this chart maps no group to any right:
   # a group reaches a right through a RoleBinding the cluster's owner writes.
+  #
+  # **Everybody the provider will issue a token to for this client is
+  # admitted, with the pod's full rights.** The console keeps no list of who
+  # may sign in, and until it asks the cluster what each person may do, every
+  # one of them acts as the pod's ServiceAccount - which, with the default
+  # readSecrets, reads every Secret in the cluster. Restrict who may use this
+  # client at the provider: an application assignment, a group condition on
+  # the client, or a provider that knows only the people meant to get in.
   oidc:
     # The provider's identity, and the exact string every token's `iss` must
     # equal. The browser is sent to the authorization endpoint its discovery
