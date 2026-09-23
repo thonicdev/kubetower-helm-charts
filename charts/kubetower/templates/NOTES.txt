@@ -26,6 +26,10 @@ at once are one user as far as the cluster is concerned.
    User: {{ .Values.auth.user }}
 {{ if .Values.auth.existingSecret }}
    Password: whatever KT_PASSWORD_HASH in Secret {{ .Values.auth.existingSecret }} is the hash of.
+
+   That Secret should also carry KT_SESSION_SECRET, at least 32 characters.
+   Without it the console draws a new session key at every start, so every
+   restart signs everybody out. The chart cannot see inside it to check.
 {{- else if .Values.auth.passwordHash }}
    Password: whatever you hashed into auth.passwordHash.
 {{- else }}

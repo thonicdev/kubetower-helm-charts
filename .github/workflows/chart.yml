@@ -49,6 +49,16 @@ jobs:
       - name: A changed credential restarts the pod
         run: python test/checksum-check.py
 
+      # The console ignores a session key under 32 characters and draws its
+      # own, so a short auth.sessionSecret would look fixed and be random.
+      - name: A session key the console would ignore is refused
+        run: |
+          if helm template kubetower ./charts/kubetower --set auth.sessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a five-character session key was accepted"
+            exit 1
+          fi
+          grep 'shorter than 32 characters' refused.txt
+
   rbac:
     name: the ClusterRole carries no escalation verb and no stray wildcard
     runs-on: ubuntu-latest
