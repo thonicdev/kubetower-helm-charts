@@ -92,6 +92,18 @@ Three switches are off and each one is a decision rather than a default:
 the custom-resource browser needs a wildcard read, and a wildcard is worth typing
 out deliberately.
 
+What two of them amount to, in plain terms: **`rbac.write` is cluster-admin on
+most clusters**, because creating a pod in a namespace means running as any
+ServiceAccount there; **`rbac.nodeProxy` is a shell on every node**, because
+the kubelet API it reaches runs commands in pods. And the default read of
+Secrets includes this release's own, so anybody who signs in can read the
+session key and mint a session of their own.
+
+`test/rbac-check.py` refuses an escalation verb (`impersonate`, `escalate`,
+`bind`), a wildcard verb, and any wildcard but the custom-resource one. That is
+all it checks: it passes with every switch on, so a green run says nothing about
+whether the switches you chose are safe.
+
 `charts/kubetower/templates/rbac.yaml` names the source file each rule exists
 for.
 

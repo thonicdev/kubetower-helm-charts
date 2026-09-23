@@ -2,10 +2,10 @@ KubeTower {{ .Chart.AppVersion }} is installed as {{ .Release.Name }} in namespa
 
 WHAT YOU JUST DEPLOYED
 ----------------------
-The console's single-operator profile, running in a pod. NOT a shared
-in-cluster console: the binary has one profile, and everybody who signs in
-shares one identity - this pod's ServiceAccount. Two people on it at once are
-one user as far as the cluster is concerned.
+The console's {{ if .Values.serverProfile }}server profile (no local shell, node shell or assistant){{ else }}desktop profile, local shell included,{{ end }}
+running in a pod. NOT a multi-user console: whichever profile runs, everybody
+who signs in shares one identity - this pod's ServiceAccount. Two people on it
+at once are one user as far as the cluster is concerned.
 
 1. REACH IT
 
@@ -41,12 +41,12 @@ one user as far as the cluster is concerned.
 3. WHAT WORKS AND WHAT DOES NOT, WITH THESE VALUES
 
    Reading resources ......... {{ if .Values.rbac.read }}yes{{ else }}NO - rbac.read is false, the lists will be empty{{ end }}
-   Secrets and Helm releases . {{ if and .Values.rbac.read .Values.rbac.readSecrets }}yes{{ else }}NO - those two pages will report a denial{{ end }}
+   Secrets and Helm releases . {{ if and .Values.rbac.read .Values.rbac.readSecrets }}yes - every Secret, this release's own session key included{{ else }}NO - those two pages will report a denial{{ end }}
    Custom resources .......... {{ if .Values.rbac.customResources }}yes (wildcard read is granted){{ else }}NO - rbac.customResources is false{{ end }}
    CPU/memory columns ........ {{ if .Values.rbac.metrics }}where metrics-server is installed{{ else }}NO - rbac.metrics is false{{ end }}
-   Editing and deleting ...... {{ if .Values.rbac.write }}YES - and to everyone with the password{{ else }}no - rbac.write is false{{ end }}
+   Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone with the password{{ else }}no - rbac.write is false{{ end }}
    Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone with the password{{ else }}no - rbac.exec is false{{ end }}
-   Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES{{ else }}no - rbac.nodeProxy is false{{ end }}
+   Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
 
 4. CHECK IT CAME UP
 
@@ -74,4 +74,24 @@ one user as far as the cluster is concerned.
 
    rbac.exec is ON in this release. Anybody who signs in has a shell in any
    pod in the cluster, holding this pod's ServiceAccount.
+{{- end }}
+{{- if .Values.rbac.write }}
+
+   rbac.write is ON in this release. It lets the console create pods,
+   Secrets and ServiceAccounts in every namespace, and a pod can be started as
+   any ServiceAccount in its namespace - so anybody who signs in can act with
+   the rights of any ServiceAccount in the cluster. On most clusters that
+   reaches cluster-admin.
+{{- end }}
+{{- if .Values.rbac.nodeProxy }}
+
+   rbac.nodeProxy is ON in this release. It reaches every kubelet's API, which
+   Kubernetes' own guidance says allows running commands in the pods on each
+   node. Anybody who signs in has that.
+{{- end }}
+{{- if and .Values.rbac.read .Values.rbac.readSecrets }}
+
+   Reading Secrets includes this release's own. Anybody who signs in can read
+   the session key from the Secrets page and mint a session that outlives a
+   password change; only rotating the key ends it.
 {{- end }}
