@@ -37,7 +37,9 @@ def render(sets, only=None):
     cmd += [arg for s in sets for arg in ("--set", s)]
     if only:
         cmd += ["--show-only", only]
-    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    # Bytes, decoded without newline translation: a checkout with CRLF line
+    # endings renders CRLF templates, and the hash is over those bytes.
+    return subprocess.run(cmd, capture_output=True, check=True).stdout.decode()
 
 
 def documents(out):
@@ -55,9 +57,11 @@ def checksums_describe_what_was_rendered(sets):
             failures.append(f"{annotation} is missing from the Deployment")
             continue
         # `include` returns the template's text; `helm template` prints the
-        # same text after its own `---` separator, without the newline the
-        # template opens with.
-        body = "\n" + docs[template].rstrip("\n") + "\n"
+        # same text after its own `---` separator, without the line break the
+        # template opens with and closes on.
+        doc = docs[template]
+        nl = "\r\n" if "\r\n" in doc else "\n"
+        body = nl + doc.rstrip("\r\n") + nl
         if hashlib.sha256(body.encode()).hexdigest() != found.group(1):
             failures.append(f"{annotation} does not hash the {template} rendered beside it")
     return failures
