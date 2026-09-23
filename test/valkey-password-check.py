@@ -96,4 +96,15 @@ if __name__ == "__main__":
     print(f"{'ok  ' if refused else 'FAIL'}  an empty password is refused")
     if not refused:
         failures.append("empty")
+
+    # A shell does not stop on a failure inside a pipe, so a missing encoder
+    # would produce an empty encoding - and an empty requirepass is no
+    # password at all. Simulated by shadowing od with a function that fails.
+    broken = run(image, setup + "od() { return 127; }\n" + init + "\necho WROTE\n",
+                 PASSWORDS["letters and digits"])
+    refused = broken.returncode != 0 and b"WROTE" not in broken.stdout \
+        and b"could not be encoded" in broken.stderr
+    print(f"{'ok  ' if refused else 'FAIL'}  a failed encoding is refused, not written as no password")
+    if not refused:
+        failures.append("failed encoding")
     sys.exit(1 if failures else 0)

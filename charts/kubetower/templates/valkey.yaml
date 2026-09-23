@@ -84,19 +84,21 @@ spec:
           # backslash or a newline in a Secret you supplied is carried as
           # itself, rather than ending the line or starting a directive of its
           # own. An empty one is refused: an empty requirepass turns
-          # authentication off.
+          # authentication off - and so is an empty encoding, which is what a
+          # pipeline with a missing tool would produce, since a shell does not
+          # stop on a failure inside a pipe.
           command:
             - sh
             - -c
             - |
               set -eu
               [ -n "$VALKEY_PASSWORD" ] || { echo "the Valkey password is empty" >&2; exit 1; }
+              escaped=$(printf '%s' "$VALKEY_PASSWORD" | od -An -tx1 -v | tr -d ' \n' | sed 's/../\\x&/g')
+              [ -n "$escaped" ] || { echo "the Valkey password could not be encoded" >&2; exit 1; }
               umask 077
               {
                 cat /defaults/valkey.conf
-                printf 'requirepass "'
-                printf '%s' "$VALKEY_PASSWORD" | od -An -tx1 -v | tr -d ' \n' | sed 's/../\\x&/g'
-                printf '"\n'
+                printf 'requirepass "%s"\n' "$escaped"
               } > /config/valkey.conf
           env:
             - name: VALKEY_PASSWORD
