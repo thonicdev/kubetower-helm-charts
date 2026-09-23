@@ -326,6 +326,14 @@ extraEnv: []
 # Turning persistence off therefore needs one of: auth.passwordHash,
 # auth.existingSecret, or auth.oidc.issuer with auth.localAccount false - the
 # three ways in that keep nothing on this disk.
+#
+# **With auth.existingSecret, that Secret must also carry KT_SESSION_SECRET.**
+# The chart's own Secret always has one; yours has one only if you put it
+# there. Without it the console draws a new key at every start, so every
+# restart signs everybody out - and that is so with persistence on as well,
+# because an environment-supplied password never reads a key from this disk.
+# The chart cannot look inside a Secret it did not write, so this is said
+# rather than refused; NOTES says it again on every install that names one.
 persistence:
   enabled: true
   storageClass: ""
