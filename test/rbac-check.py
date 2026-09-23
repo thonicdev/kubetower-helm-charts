@@ -1,4 +1,4 @@
-"""Refuse a ClusterRole that grants more than this console can justify.
+"""Refuse a ClusterRole that carries an escalation verb or a stray wildcard.
 
     python test/rbac-check.py             # check the chart
     python test/rbac-check.py --self-test # prove the check can fail, then check
@@ -6,7 +6,7 @@
 A hand-written ClusterRole drifts the first time a page is added, and it drifts
 towards a `*`. This is the part of that problem which can be asserted
 mechanically: not *is every rule needed* - nothing here can know that - but
-*does any rule grant something no read-only console has a use for*.
+*does any rule carry one of the few grants that make every other rule moot*.
 
 Three rules, and the third is the one with a real exception in it.
 
@@ -22,6 +22,19 @@ Three rules, and the third is the one with a real exception in it.
    only for reading.** The custom-resource browser genuinely cannot enumerate
    what it has not been told about, so that one wildcard is the feature. It is
    off by default, it is the only wildcard permitted, and its verbs are checked.
+
+**What it does not check, stated because a green tick invites the opposite
+reading.** It passes with every toggle on, and two toggles grant a great deal
+without a wildcard or an escalation verb:
+
+- `rbac.write` grants `create` on pods, Secrets and ServiceAccounts in every
+  namespace. A pod runs as any ServiceAccount in its namespace, so that is the
+  rights of every ServiceAccount in the cluster - cluster-admin on most.
+- `rbac.nodeProxy` grants `get` on `nodes/proxy`, which reaches the kubelet's
+  own API and allows running commands in the pods on each node.
+
+Both are off by default and both are described in `values.yaml`. This check
+says neither was widened by a wildcard; it does not say they are safe.
 """
 
 import subprocess

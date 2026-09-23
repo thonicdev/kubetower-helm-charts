@@ -57,8 +57,13 @@ jobs:
           helm template kubetower ./charts/kubetower --set serverProfile=true \
             | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
 
+      # The pod reads its password hash and session key once, at start, so a
+      # Secret that changes under an unchanged Deployment changes nothing.
+      - name: A changed credential restarts the pod
+        run: python test/checksum-check.py
+
   rbac:
-    name: the ClusterRole grants nothing it should not
+    name: the ClusterRole carries no escalation verb and no stray wildcard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +78,10 @@ jobs:
     name: nothing here cites what a stranger cannot open
     runs-on: ubuntu-latest
     steps:
+      # The whole history, because the commit messages are scanned too.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # This repository is public. Its instructions say to link the console
       # freely and anything private never, and that was broken twice in its first
       # two days - once by a copied template naming private repositories, once by
@@ -81,13 +89,41 @@ jobs:
       # were caught by somebody reading. A rule only a reader enforces is a
       # comment, so it is a job.
       #
-      # A pull request's own `Closes` line may name a private issue; that is in
-      # the PR body, which this job does not read, and it is the one exception.
-      - name: no private identifiers or repository names in the tree
+      # First the proof that it can fail: a planted file and a planted commit
+      # message in a throwaway repository must both be refused.
+      - name: the check refuses what it is meant to refuse
+        run: bash test/public-check.sh --self-test
+      # Every tracked file, this workflow and the script included. Nothing is
+      # excluded: the script spells none of the names it refuses.
+      - name: no private reference in the tree
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+        run: bash test/public-check.sh tree
+      # And every commit message the change would bring. A squash merge can
+      # put all of them into the body of the commit that lands on `main`, so a
+      # message is as public as a file. A pull request's own description is
+      # not read here, and its `Closes` line is the one place a private issue
+      # may be named.
+      - name: no private reference in a commit message
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          pattern='kubetower-docs#[0-9]+|claude-work#[0-9]+|\bD-[0-9]+\b|\bO-[0-9]+\b|\bFX-[0-9]+\b|SERVER-MODE-THREAT-MODEL|claude-plugins|Claude-global'
-          if git grep -nE "$pattern" -- . ':!.github/workflows/chart.yml'; then
-            echo "::error::a private reference is in a public repository - state the reasoning in plain words instead"
-            exit 1
+          if [ "$EVENT" = pull_request ]; then
+            range="origin/$BASE..HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            range="$BEFORE..HEAD"
+          else
+            echo "no earlier commit to compare against on this push - nothing to scan"
+            exit 0
           fi
-          echo "no private references"
+          # The step's shell stops at the first failure, so the status is
+          # caught rather than read afterwards.
+          rc=0
+          bash test/public-check.sh commits "$range" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::a commit message above names something private. It cannot be taken back once pushed to a shared branch, so squash the pull request and edit the message before merging - the default squash message repeats every commit message"
+          fi
+          exit $rc
