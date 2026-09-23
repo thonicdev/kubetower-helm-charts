@@ -31,7 +31,11 @@ is. Every consequence follows from that:
   set, this one changes**: people sign in through the identity provider as
   themselves, each with a session of their own. The shared password is then
   gone unless `auth.localAccount` keeps it. The line above still holds: they
-  all act as the one ServiceAccount.
+  all act as the one ServiceAccount. **And everybody the provider will issue a
+  token to for this client is admitted**, with the pod's full rights — the
+  console keeps no list of who may sign in. With the default read of Secrets,
+  a broad provider means every account holder reads every Secret. Restrict
+  who may use the client at the provider.
 - **The terminal is the pod's terminal.** With `rbac.exec` on, anybody who knows
   the password gets a shell in any pod, holding this ServiceAccount.
 - **The port-forward cap is per process**, so its 16 forwards are shared by
@@ -140,6 +144,18 @@ Three switches are off and each one is a decision rather than a default:
 the custom-resource browser needs a wildcard read, and a wildcard is worth typing
 out deliberately.
 
+What two of them amount to, in plain terms: **`rbac.write` is cluster-admin on
+most clusters**, because creating a pod in a namespace means running as any
+ServiceAccount there; **`rbac.nodeProxy` is a shell on every node**, because
+the kubelet API it reaches runs commands in pods. And the default read of
+Secrets includes this release's own, so anybody who signs in can read the
+session key and mint a session of their own.
+
+`test/rbac-check.py` refuses an escalation verb (`impersonate`, `escalate`,
+`bind`), a wildcard verb, and any wildcard but the custom-resource one. That is
+all it checks: it passes with every switch on, so a green run says nothing about
+whether the switches you chose are safe.
+
 `charts/kubetower/templates/rbac.yaml` names the source file each rule exists
 for.
 
@@ -231,7 +247,9 @@ discovery from, and the issuer stays what the browser sees.
 - No published image, no registry, no chart repository, no `helm package`.
 - No per-person authorisation. With `auth.oidc` set, people sign in as
   themselves, but the console does not yet ask the cluster what a person may do,
-  so everyone who can sign in acts as the pod's ServiceAccount. No
+  so everyone who can sign in acts as the pod's ServiceAccount — and everyone
+  the provider issues a token to for the client can sign in. Restrict it at the
+  provider; nothing here can. No
   multi-tenancy. And no group-to-permission mapping, ever: a group reaches a
   right through a RoleBinding the cluster's owner writes, not through a value
   here.

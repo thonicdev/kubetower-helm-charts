@@ -26,9 +26,21 @@ spec:
   template:
     metadata:
       annotations:
-        # Restart the pod when the kubeconfig or the credentials change.
+        # Restart the pod when the kubeconfig or the credentials change. The
+        # process reads both once, at start, so a changed Secret with an
+        # unchanged Deployment would leave the old password and the old
+        # session key running - and rotating the key would revoke nothing.
         {{- if .Values.kubeconfig.generate }}
         checksum/kubeconfig: {{ include (print $.Template.BasePath "/configmap-kubeconfig.yaml") . | sha256sum }}
+        {{- end }}
+        # Over the Secret this chart writes. A Secret named by
+        # auth.existingSecret is not the chart's to read, so its name is
+        # hashed instead: changing its contents needs a
+        # `kubectl rollout restart` of this Deployment.
+        {{- if .Values.auth.existingSecret }}
+        checksum/secret: {{ .Values.auth.existingSecret | sha256sum }}
+        {{- else }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}

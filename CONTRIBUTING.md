@@ -38,7 +38,8 @@ advance is the only reason this file leads with it.
 
 - **Conventional Commits**, on every commit and on the pull-request title. The
   allowed scopes are in `commitlint.config.js`.
-- **Run the checks**: `helm lint ./charts/kubetower` and
-  `python test/rbac-check.py --self-test`.
+- **Run the checks**: `helm lint ./charts/kubetower`,
+  `python test/rbac-check.py --self-test`, `python test/checksum-check.py`
+  and `bash test/public-check.sh --self-test && bash test/public-check.sh tree`.
 - **Say what you did not test.** The list above exists because nobody has;
   a change that leaves one of them untested is fine, and saying so is required.

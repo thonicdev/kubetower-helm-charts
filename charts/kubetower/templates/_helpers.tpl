@@ -59,22 +59,39 @@ The session key, preserved across upgrades.
 
 A freshly drawn key on every `helm upgrade` signs everybody out, which looks
 like a bug rather than a rotation. So: what the values say, else what is
-already in the cluster, else a new one. `lookup` returns nothing under
-`helm template` and during a dry run, so the rendered manifest there carries a
-key that is never installed - which is correct but worth knowing before
-diffing two renders and finding them different.
+already in the cluster, else a new one.
+
+`lookup` returns nothing under `helm template`, during a dry run, and in a
+GitOps tool that renders without a cluster - Argo CD among them. There, every
+render draws a new key. Installed that way, the Secret changes on every sync,
+and the checksum on the Deployment then rolls the pod each time, signing
+everybody out; without the checksum, pods started at different times would
+hold different keys and refuse each other's sessions. Set auth.sessionSecret
+or auth.existingSecret for those tools.
+
+The value is drawn once per render and remembered for the rest of it, so the
+Secret and the Deployment's checksum over it describe the same key. Without
+that, the checksum would hash a second, different draw.
 */}}
 {{- define "kubetower.sessionSecret" -}}
+{{- if not (hasKey .Values.auth "_drawnSessionSecret") }}
+{{- $value := "" }}
 {{- if .Values.auth.sessionSecret }}
-{{- .Values.auth.sessionSecret }}
+{{- if lt (len .Values.auth.sessionSecret) 32 }}
+{{- fail "auth.sessionSecret is shorter than 32 characters: the console would ignore it and draw its own key at every start, signing everybody out on each restart. Use at least 32 characters, e.g. the output of `openssl rand -hex 32`." }}
+{{- end }}
+{{- $value = .Values.auth.sessionSecret }}
 {{- else }}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace (include "kubetower.fullname" .) }}
 {{- if and $existing $existing.data (index $existing.data "KT_SESSION_SECRET") }}
-{{- index $existing.data "KT_SESSION_SECRET" | b64dec }}
+{{- $value = index $existing.data "KT_SESSION_SECRET" | b64dec }}
 {{- else }}
-{{- randAlphaNum 64 }}
+{{- $value = randAlphaNum 64 }}
 {{- end }}
 {{- end }}
+{{- $_ := set .Values.auth "_drawnSessionSecret" $value }}
+{{- end }}
+{{- index .Values.auth "_drawnSessionSecret" }}
 {{- end }}
 
 {{- define "kubetower.image" -}}
