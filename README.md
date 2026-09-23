@@ -69,14 +69,33 @@ and there is no archive. The console does not register those routes at all.
 | `persistence.enabled: true` | One ReadWriteOnce volume is mounted by one node at a time; a ReadWriteMany one would be several processes rewriting each other's files from memory |
 | `serverProfile: false` | The desktop profile is one operator's console; several of it are several consoles |
 | The shared password offered with no `auth.passwordHash` | Each pod would draw its own password |
+| `valkey.existingSecret` with an empty `valkey.existingSecretKey` | The key holding the password would be unknown |
 | `valkey.existingSecret` with one replica | A setting read by nothing |
 
 **The Valkey password is drawn once and kept across upgrades**, by reading back
-the Secret the first install wrote (`lookup`). That works only when Helm talks
-to a cluster: `helm template`, `--dry-run` and GitOps tools that render without
-one (Argo CD among them) cannot see the Secret and draw a new password on every
-render, which restarts Valkey and signs everybody out on every sync. With those,
-create the Secret yourself and set `valkey.existingSecret`.
+the Secret the first install wrote (`lookup`). So is the console's session key.
+That works only when Helm talks to a cluster: `helm template`, `--dry-run` and
+GitOps tools that render without one (Argo CD among them) cannot see either
+Secret and draw both anew on every render. Valkey and every console carry a
+checksum of the Secrets they read, so a changed one restarts all of them
+together — the alternative, pods started after the change holding the new
+password and key while the running ones hold the old, fails requests on
+whichever pod is out of step. Restarting together still signs everybody out on
+every sync. **With those tools, create the Secrets yourself**: set
+`valkey.existingSecret`, and `auth.sessionSecret` or `auth.existingSecret`.
+
+The password may contain any bytes: the init container writes it escaped into
+Valkey's configuration, and `test/valkey-password-check.py` runs the rendered
+script in the pinned image with a quote, a backslash, a newline and an attempt
+to add a directive. An empty password is refused, because an empty
+`requirepass` turns authentication off.
+
+**Valkey's password is readable by everybody who signs in**, with the default
+`rbac.readSecrets`, and nothing restricts who can connect to Valkey. The
+records there are sealed with the session key — which that same read reaches in
+this release's own Secret. So the Valkey password adds the power to delete every
+record and sign everybody out, and nothing the Secrets read had not already
+given.
 
 ```bash
 helm install kubetower ./charts/kubetower -n kubetower --create-namespace \
@@ -121,6 +140,11 @@ password hash if you set one), ConfigMap (the kubeconfig), PersistentVolumeClaim
 (the state directory), Deployment, Service. Ingress only if you ask, and it is
 off because an Ingress in front of this publishes cluster credentials behind one
 shared password.
+
+With `replicaCount` above one, no PersistentVolumeClaim, and four more objects
+for the store the consoles share: a Valkey StatefulSet of one, its Service, its
+ConfigMap (the configuration without the password) and its Secret (the
+password, unless `valkey.existingSecret` names yours).
 
 ### The kubeconfig is the trick
 
@@ -257,8 +281,10 @@ discovery from, and the issuer stays what the browser sees.
   Prometheus by port-forward, and to whatever a forward points at; a policy that
   is honest about that permits nearly everything, and one that is not breaks the
   console.
-- No HA. `replicaCount` is 1 and the update strategy is `Recreate`, because the
-  state directory is ReadWriteOnce and the forward table is in memory.
+- No high availability of the store. `replicaCount` defaults to 1, with
+  `Recreate`, because the state directory is ReadWriteOnce and the forward table
+  is in memory. Above one, the consoles roll with `RollingUpdate` and share a
+  single Valkey pod that keeps nothing on disk: losing it signs everybody out.
 - No PodDisruptionBudget, no HorizontalPodAutoscaler. Both would be about a
   service; this is one operator's console.
 

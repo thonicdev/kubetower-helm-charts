@@ -102,7 +102,9 @@ at once are one user as far as the cluster is concerned.
 
    Its password was drawn by this chart and is read back on every upgrade. A
    `helm template` or a GitOps tool rendering without a cluster cannot read it
-   back and draws a new one each time - use valkey.existingSecret there.
+   back and draws a new one each time, and so does the session key: every pod
+   then restarts on each sync and everybody is signed out. Use
+   valkey.existingSecret there, and auth.sessionSecret or auth.existingSecret.
 {{- end }}
 {{- end }}
 
