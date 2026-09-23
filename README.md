@@ -153,7 +153,7 @@ deploys the desktop profile instead, shell included.
 |---|---|---|
 | Local shell, node shell, assistant | served | **not registered** — the address answers what a path that never existed answers, not a refusal |
 | Pod exec, port-forward, everything else | served | served |
-| `/api/capabilities` `mode` | `container` | `server` |
+| `/api/capabilities` `mode` | `container` | `shared` |
 
 **"What a path that never existed answers" is not one status**, and the
 difference is worth knowing before you go looking. Measured on Docker Desktop,
