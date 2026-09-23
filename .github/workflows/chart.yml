@@ -99,12 +99,22 @@ jobs:
           refused "serverProfile is false" --set replicaCount=2 --set persistence.enabled=false --set serverProfile=false $oidc
           refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false
           refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false --set auth.localAccount=true $oidc
+          refused "valkey.existingSecretKey is empty" --set replicaCount=2 --set persistence.enabled=false \
+            --set valkey.existingSecret=mine --set valkey.existingSecretKey= $oidc
           refused "read by nothing" --set valkey.existingSecret=mine
           # The control: the same values made coherent render.
           helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
           helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
             --set auth.passwordHash='$2a$12$abcdefghijklmnopqrstuv' > /dev/null
           echo "the coherent configurations render"
+
+      # The init container writes the Valkey password into its configuration.
+      # Run exactly as rendered, in the pinned image, with passwords chosen to
+      # break naive quoting. Local docker only; nothing reaches a cluster.
+      - name: Valkey takes any password, and refuses an empty one
+        run: |
+          pip install pyyaml
+          python test/valkey-password-check.py
 
       # The pod reads its password hash and session key once, at start, so a
       # Secret that changes under an unchanged Deployment changes nothing.

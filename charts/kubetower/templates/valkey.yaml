@@ -16,46 +16,6 @@ a restart of this pod signs everybody out, as a restart of a single console
 does - one click each, while the identity provider's own session is alive.
 */ -}}
 {{- if include "kubetower.several" . }}
-{{- if not .Values.valkey.existingSecret }}
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ include "kubetower.valkeyName" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "kubetower.labels" . | nindent 4 }}
-type: Opaque
-stringData:
-  # Drawn once and kept across upgrades - see kubetower.valkeyPassword for how,
-  # and for the one case where it cannot be kept.
-  password: {{ include "kubetower.valkeyPassword" . | quote }}
----
-{{- end }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "kubetower.valkeyName" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "kubetower.labels" . | nindent 4 }}
-data:
-  # Everything but the password, which the init container writes beside this
-  # from the Secret - never onto a command line, where the process list would
-  # show it.
-  valkey.conf: |
-    bind * -::*
-    port {{ int .Values.valkey.service.port }}
-    protected-mode yes
-    save ""
-    appendonly no
-    dir /data
-    # A bound, and what goes first when it is reached. The sign-in route is
-    # public, so anybody can fill this with sign-ins in progress; volatile-ttl
-    # evicts the key nearest its expiry, which is a ten-minute sign-in or a
-    # two-minute plan long before it is a session.
-    maxmemory {{ .Values.valkey.maxmemory }}
-    maxmemory-policy volatile-ttl
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -93,10 +53,11 @@ spec:
       labels:
         {{- include "kubetower.valkeySelectorLabels" . | nindent 8 }}
       annotations:
-        # Restart when the configuration changes. The password is not hashed
-        # in here: it is stable across upgrades, and an existingSecret's
-        # rotation is the operator's to roll out.
-        checksum/config: {{ .Values.valkey.maxmemory | toString | sha256sum }}
+        # Restart when the configuration or the password changes. Both are read
+        # once, at start: a pod left running after either changed would serve
+        # the old one while every pod started later used the new.
+        checksum/config: {{ include (print $.Template.BasePath "/valkey-config.yaml") . | sha256sum }}
+        checksum/secret: {{ include "kubetower.valkeySecretChecksum" . }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
@@ -116,13 +77,27 @@ spec:
         - name: config
           image: {{ printf "%s:%s" .Values.valkey.image.repository .Values.valkey.image.tag | quote }}
           imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
-          # `printf` is a shell builtin, so the password is never an argument
-          # of any process. Quoted for Valkey's own parser, which is why the
-          # README asks for a password without a double quote in it.
+          # The password reaches the file without being an argument of any
+          # process: printf is a shell builtin, and od, tr and sed read it on
+          # stdin. It is written as \xHH for every byte, inside double quotes,
+          # which Valkey's configuration parser decodes - so a quote, a
+          # backslash or a newline in a Secret you supplied is carried as
+          # itself, rather than ending the line or starting a directive of its
+          # own. An empty one is refused: an empty requirepass turns
+          # authentication off.
           command:
             - sh
             - -c
-            - umask 077 && { cat /defaults/valkey.conf; printf 'requirepass "%s"\n' "$VALKEY_PASSWORD"; } > /config/valkey.conf
+            - |
+              set -eu
+              [ -n "$VALKEY_PASSWORD" ] || { echo "the Valkey password is empty" >&2; exit 1; }
+              umask 077
+              {
+                cat /defaults/valkey.conf
+                printf 'requirepass "'
+                printf '%s' "$VALKEY_PASSWORD" | od -An -tx1 -v | tr -d ' \n' | sed 's/../\\x&/g'
+                printf '"\n'
+              } > /config/valkey.conf
           env:
             - name: VALKEY_PASSWORD
               valueFrom:

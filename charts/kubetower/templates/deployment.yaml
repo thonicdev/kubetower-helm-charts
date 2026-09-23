@@ -37,6 +37,10 @@ spec:
         # auth.existingSecret is not the chart's to read, so its name is
         # hashed instead: changing its contents needs a
         # `kubectl rollout restart` of this Deployment.
+        {{- if include "kubetower.several" . }}
+        # Several consoles read the Valkey password too.
+        checksum/valkey-secret: {{ include "kubetower.valkeySecretChecksum" . }}
+        {{- end }}
         {{- if .Values.auth.existingSecret }}
         checksum/secret: {{ .Values.auth.existingSecret | sha256sum }}
         {{- else }}
