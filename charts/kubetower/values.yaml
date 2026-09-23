@@ -228,7 +228,7 @@ auth:
     sessionMax: ""
 
   # Keep the shared password beside the identity provider. **Off, and that is
-  # the decision (D-35)**: a shared password next to a provider is a way in that
+  # the decision**: a shared password next to a provider is a way in that
   # bypasses the provider, which nobody can attribute and nobody remembers to
   # turn off. With it off and `oidc.issuer` set, the console registers no
   # password route and draws no password. The cost is stated rather than found

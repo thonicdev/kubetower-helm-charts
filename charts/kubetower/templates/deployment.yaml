@@ -142,7 +142,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- if and .Values.auth.oidc.issuer .Values.auth.localAccount }}
-            # D-35's escape hatch, typed out: the shared password stays.
+            # The escape hatch, typed out: the shared password stays.
             - name: KT_AUTH_LOCAL_ACCOUNT
               value: "true"
             {{- end }}
