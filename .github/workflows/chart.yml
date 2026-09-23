@@ -79,3 +79,26 @@ jobs:
       # --self-test first, for the rbac job's reason: it renders the chart with
       # the refusal removed and fails unless exactly the refusal cases fail.
       - run: python test/persistence-check.py --self-test
+
+  public:
+    name: nothing here cites what a stranger cannot open
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # This repository is public. Its instructions say to link the console
+      # freely and anything private never, and that was broken twice in its first
+      # two days - once by a copied template naming private repositories, once by
+      # comments citing a decision by its identifier in a private register. Both
+      # were caught by somebody reading. A rule only a reader enforces is a
+      # comment, so it is a job.
+      #
+      # A pull request's own `Closes` line may name a private issue; that is in
+      # the PR body, which this job does not read, and it is the one exception.
+      - name: no private identifiers or repository names in the tree
+        run: |
+          pattern='kubetower-docs#[0-9]+|claude-work#[0-9]+|\bD-[0-9]+\b|\bO-[0-9]+\b|\bFX-[0-9]+\b|SERVER-MODE-THREAT-MODEL|claude-plugins|Claude-global'
+          if git grep -nE "$pattern" -- . ':!.github/workflows/chart.yml'; then
+            echo "::error::a private reference is in a public repository - state the reasoning in plain words instead"
+            exit 1
+          fi
+          echo "no private references"
