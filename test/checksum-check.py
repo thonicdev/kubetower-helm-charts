@@ -74,13 +74,13 @@ def a_change_rolls_the_pods(name, first, second):
 
 
 if __name__ == "__main__":
-    fixed = ["auth.sessionSecret=fixed-for-the-check"]
+    fixed = ["auth.sessionSecret=fixed-for-the-check-and-32-characters-long"]
     failures = []
     failures += checksums_describe_what_was_rendered([])
     failures += checksums_describe_what_was_rendered(fixed)
     failures += a_change_rolls_the_pods(
         "a new session key",
-        ["auth.sessionSecret=one"], ["auth.sessionSecret=two"])
+        ["auth.sessionSecret=" + "1" * 32], ["auth.sessionSecret=" + "2" * 32])
     failures += a_change_rolls_the_pods(
         "a new password hash",
         fixed + ["auth.passwordHash=$2y$12$first"], fixed + ["auth.passwordHash=$2y$12$second"])

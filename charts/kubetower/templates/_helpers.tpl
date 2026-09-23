@@ -77,6 +77,9 @@ that, the checksum would hash a second, different draw.
 {{- if not (hasKey .Values.auth "_drawnSessionSecret") }}
 {{- $value := "" }}
 {{- if .Values.auth.sessionSecret }}
+{{- if lt (len .Values.auth.sessionSecret) 32 }}
+{{- fail "auth.sessionSecret is shorter than 32 characters: the console would ignore it and draw its own key at every start, signing everybody out on each restart. Use at least 32 characters, e.g. the output of `openssl rand -hex 32`." }}
+{{- end }}
 {{- $value = .Values.auth.sessionSecret }}
 {{- else }}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace (include "kubetower.fullname" .) }}
