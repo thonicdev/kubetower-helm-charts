@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   attribution:
-    name: R1 - no machine attribution
+    name: no machine co-author in the history
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +27,14 @@ jobs:
           range="origin/${{ github.base_ref }}..HEAD"
           if git log --format='%B' "$range" \
              | grep -inE 'co-authored-by:.*(claude|anthropic)|generated with .*claude'; then
-            echo "::error::R1 - machine attribution in the commit range"
+            echo "::error::a commit in this range names a machine as co-author or generator"
             exit 1
           fi
       - name: Report every author and committer in the range
         run: git log --format='%an <%ae>%n%cn <%ce>' "origin/${{ github.base_ref }}..HEAD" | sort -u
 
   commits:
-    name: R2 - conventional commits
+    name: commit messages follow Conventional Commits
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +48,7 @@ jobs:
         run: npx commitlint --from "origin/${{ github.base_ref }}" --to HEAD --verbose
 
   pr-title:
-    name: R2 - conventional PR title
+    name: the pull-request title follows Conventional Commits
     runs-on: ubuntu-latest
     steps:
       # Without this the config file is absent and commitlint fails on every
