@@ -172,14 +172,27 @@ auth:
   # Generate one with:  htpasswd -nbBC 12 "" "yourpassword" | cut -c2-
   passwordHash: ""
 
-  # Use a Secret you made yourself instead. It must carry the keys
-  # KT_PASSWORD_HASH and, optionally, KT_SESSION_SECRET.
+  # Use a Secret you made yourself instead. It must carry KT_PASSWORD_HASH,
+  # and it should carry KT_SESSION_SECRET, at least 32 characters. Without the
+  # key the pod still starts, but the console draws a new one in memory at
+  # every start - with or without persistence - so every restart, and every
+  # rollout, signs everybody out. The chart cannot look inside a Secret it did
+  # not write, so it cannot refuse the omission; NOTES repeats this instead.
   existingSecret: ""
 
   # The key that signs session cookies. Empty means: reuse the one already in
   # the release's Secret if there is one, otherwise draw a new one. Rotating it
   # signs everybody out, which is also the only way to revoke a session - the
   # token is stateless and Logout only drops the cookie.
+  #
+  # At least 32 characters. The console ignores a shorter key and draws its
+  # own in memory, which would sign everybody out at every restart while the
+  # values claim a fixed key - so the chart refuses a shorter one.
+  #
+  # Set it (or auth.existingSecret) when a tool renders this chart without a
+  # cluster - `helm template`, Argo CD and other GitOps tools. The chart
+  # keeps a drawn key across upgrades by reading it back from the cluster, and
+  # those tools cannot, so they draw a new key on every render.
   sessionSecret: ""
 
   # Idle window, and the ceiling counted from login. The binary's own defaults
