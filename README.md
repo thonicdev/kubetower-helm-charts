@@ -40,6 +40,50 @@ is. Every consequence follows from that:
 Install it for one operator, reached over `kubectl port-forward`. Reaching it
 any other way is untested and the list above is why.
 
+## Several replicas
+
+`replicaCount` above one also deploys a small Valkey - a StatefulSet of one,
+from the official `valkey/valkey` image, pinned by digest - that the consoles
+share their sign-in sessions, the sign-ins in progress (`state`, the PKCE
+verifier, the nonce) and their confirmation plans through. A sign-in started
+through one pod finishes through another, a session opened on one is valid on
+the next, and a sign-out through either ends it on both. Every value is sealed
+by the console with its session key before it is written, so the Valkey
+password alone reads nothing and forges nothing. Nothing is written to disk: a
+restart of the Valkey pod signs everybody out, which is what a restart of a
+single console costs too.
+
+**What several replicas do not offer**, because each console's state directory
+is its own: the rail, column and density preferences cannot be changed (every
+replica draws the defaults), the settings are read-only, port-forwards are off,
+and there is no archive. The console does not register those routes at all.
+
+**The chart refuses, at install**, the combinations that would half-work:
+
+| With `replicaCount > 1` | Why it is refused |
+|---|---|
+| `persistence.enabled: true` | One ReadWriteOnce volume is mounted by one node at a time; a ReadWriteMany one would be several processes rewriting each other's files from memory |
+| `serverProfile: false` | The desktop profile is one operator's console; several of it are several consoles |
+| The shared password offered with no `auth.passwordHash` | Each pod would draw its own password |
+| `valkey.existingSecret` with one replica | A setting read by nothing |
+
+**The Valkey password is drawn once and kept across upgrades**, by reading back
+the Secret the first install wrote (`lookup`). That works only when Helm talks
+to a cluster: `helm template`, `--dry-run` and GitOps tools that render without
+one (Argo CD among them) cannot see the Secret and draw a new password on every
+render, which restarts Valkey and signs everybody out on every sync. With those,
+create the Secret yourself and set `valkey.existingSecret`.
+
+```bash
+helm install kubetower ./charts/kubetower -n kubetower --create-namespace \
+  --set image.tag=helm-test --set serverProfile=true \
+  --set replicaCount=2 --set persistence.enabled=false \
+  --set auth.oidc.issuer=... --set auth.oidc.clientID=... --set auth.oidc.redirectURL=...
+```
+
+Not done yet: a NetworkPolicy restricting Valkey to the console's pods, TLS to
+Valkey, and a Valkey that survives its own restart.
+
 ## There is no image to pull
 
 Nothing in the console's repository publishes one yet: its release workflow

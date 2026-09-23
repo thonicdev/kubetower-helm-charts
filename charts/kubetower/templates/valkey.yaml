@@ -1,0 +1,199 @@
+{{- /*
+The store several consoles share: their sign-in sessions, the sign-ins in
+progress, and the confirmation plans between a preview and its act. Deployed
+only when replicaCount is above one; one console keeps all three in its own
+memory, as it always has.
+
+Written here rather than taken from a subchart: the common one's images are no
+longer freely pullable, and what is needed is one small process with a
+password - which is less than a subchart's values file.
+
+**Nothing is written to disk.** No RDB, no AOF. Every record in it has an
+expiry of minutes or hours, and every one is sealed by the consoles with a key
+Valkey never sees, so a copy on a volume would be a copy of nothing useful
+that outlives the thing it describes. The price is stated rather than hidden:
+a restart of this pod signs everybody out, as a restart of a single console
+does - one click each, while the identity provider's own session is alive.
+*/ -}}
+{{- if include "kubetower.several" . }}
+{{- if not .Values.valkey.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  # Drawn once and kept across upgrades - see kubetower.valkeyPassword for how,
+  # and for the one case where it cannot be kept.
+  password: {{ include "kubetower.valkeyPassword" . | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+data:
+  # Everything but the password, which the init container writes beside this
+  # from the Secret - never onto a command line, where the process list would
+  # show it.
+  valkey.conf: |
+    bind * -::*
+    port {{ int .Values.valkey.service.port }}
+    protected-mode yes
+    save ""
+    appendonly no
+    dir /data
+    # A bound, and what goes first when it is reached. The sign-in route is
+    # public, so anybody can fill this with sign-ins in progress; volatile-ttl
+    # evicts the key nearest its expiry, which is a ten-minute sign-in or a
+    # two-minute plan long before it is a session.
+    maxmemory {{ .Values.valkey.maxmemory }}
+    maxmemory-policy volatile-ttl
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: valkey
+      port: {{ int .Values.valkey.service.port }}
+      targetPort: valkey
+      protocol: TCP
+  selector:
+    {{- include "kubetower.valkeySelectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  # One. Several consoles share one store; a replicated Valkey is a Sentinel
+  # or a cluster, which the console's client is not configured for.
+  replicas: 1
+  serviceName: {{ include "kubetower.valkeyName" . }}
+  selector:
+    matchLabels:
+      {{- include "kubetower.valkeySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubetower.valkeySelectorLabels" . | nindent 8 }}
+      annotations:
+        # Restart when the configuration changes. The password is not hashed
+        # in here: it is stable across upgrades, and an existingSecret's
+        # rotation is the operator's to roll out.
+        checksum/config: {{ .Values.valkey.maxmemory | toString | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # uid 999 / gid 1000 are the image's own `valkey` user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: config
+          image: {{ printf "%s:%s" .Values.valkey.image.repository .Values.valkey.image.tag | quote }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          # `printf` is a shell builtin, so the password is never an argument
+          # of any process. Quoted for Valkey's own parser, which is why the
+          # README asks for a password without a double quote in it.
+          command:
+            - sh
+            - -c
+            - umask 077 && { cat /defaults/valkey.conf; printf 'requirepass "%s"\n' "$VALKEY_PASSWORD"; } > /config/valkey.conf
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubetower.valkeySecretName" . | quote }}
+                  key: {{ include "kubetower.valkeySecretKey" . | quote }}
+          securityContext:
+            {{- toYaml .Values.valkey.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: defaults
+              mountPath: /defaults
+              readOnly: true
+            - name: config
+              mountPath: /config
+      containers:
+        - name: valkey
+          image: {{ printf "%s:%s" .Values.valkey.image.repository .Values.valkey.image.tag | quote }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          command: ["valkey-server", "/config/valkey.conf"]
+          ports:
+            - name: valkey
+              containerPort: {{ int .Values.valkey.service.port }}
+              protocol: TCP
+          env:
+            # For the readiness probe's valkey-cli, which reads it from the
+            # environment rather than from its arguments.
+            - name: VALKEYCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubetower.valkeySecretName" . | quote }}
+                  key: {{ include "kubetower.valkeySecretKey" . | quote }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -p {{ int .Values.valkey.service.port }} ping | grep -q PONG
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: valkey
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.valkey.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: defaults
+          configMap:
+            name: {{ include "kubetower.valkeyName" . }}
+        # In memory: the file holds the password.
+        - name: config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: data
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.valkey.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.valkey.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

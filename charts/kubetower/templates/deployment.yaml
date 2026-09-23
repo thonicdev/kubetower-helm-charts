@@ -7,12 +7,19 @@ metadata:
     {{- include "kubetower.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  # Recreate, not RollingUpdate. The state directory is ReadWriteOnce, so a
-  # second pod cannot mount it while the first holds it - a rolling update
-  # would wedge with the new pod Pending on the volume. One console is also
-  # what the process assumes: the forward table lives in its memory.
+  # Recreate, not RollingUpdate, for one console. The state directory is
+  # ReadWriteOnce, so a second pod cannot mount it while the first holds it - a
+  # rolling update would wedge with the new pod Pending on the volume.
+  #
+  # Several consoles have no volume to wait for (replicas-refused.yaml sees to
+  # that) and share their sessions through Valkey, so they roll: a pod replaced
+  # while the others serve is an upgrade nobody signed in notices.
   strategy:
+    {{- if include "kubetower.several" . }}
+    type: RollingUpdate
+    {{- else }}
     type: Recreate
+    {{- end }}
   selector:
     matchLabels:
       {{- include "kubetower.selectorLabels" . | nindent 6 }}
@@ -164,6 +171,7 @@ spec:
             - name: KT_CLAUDE_PERMISSION_MODE
               value: {{ .Values.claude.permissionMode | quote }}
             {{- end }}
+            {{- include "kubetower.valkeyEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

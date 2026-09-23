@@ -1,0 +1,36 @@
+{{/*
+The configurations this chart refuses to install, rather than install
+half-working.
+
+Each is a release that would start, answer its probes and then behave
+differently depending on which pod a request landed on - diagnosed, if at all,
+as "sometimes it signs me out". A `fail` at install is the cheaper answer.
+Renders nothing when none applies.
+*/}}
+{{- $several := include "kubetower.several" . }}
+{{- if $several }}
+
+{{- if .Values.persistence.enabled }}
+{{- fail (printf "replicaCount is %d and persistence.enabled is true. Several consoles cannot share the state directory: a ReadWriteOnce volume is mounted by one node at a time, and a ReadWriteMany one would be %d processes each rewriting the others' files from its own memory. Set persistence.enabled=false. With several replicas the console keeps nothing on that disk that it offers: the preference and settings writes, port-forwards and the archive are not registered." (int .Values.replicaCount) (int .Values.replicaCount)) }}
+{{- end }}
+
+{{- if not .Values.serverProfile }}
+{{- fail (printf "replicaCount is %d and serverProfile is false. The desktop profile is one operator's console, and several of them are several consoles; the console refuses to start that way. Set serverProfile=true." (int .Values.replicaCount)) }}
+{{- end }}
+
+{{- $passwordOffered := or (not .Values.auth.oidc.issuer) .Values.auth.localAccount }}
+{{- if and $passwordOffered (not .Values.auth.passwordHash) (not .Values.auth.existingSecret) }}
+{{- fail (printf "replicaCount is %d and the shared password is offered with no auth.passwordHash. Each replica would draw its own password into its own state directory and print a different one. Set auth.passwordHash (or auth.existingSecret carrying KT_PASSWORD_HASH), or configure auth.oidc without auth.localAccount." (int .Values.replicaCount)) }}
+{{- end }}
+
+{{- if and .Values.valkey.existingSecret (not .Values.valkey.existingSecretKey) }}
+{{- fail "valkey.existingSecret is set and valkey.existingSecretKey is empty: the chart would not know which key of the Secret holds the password." }}
+{{- end }}
+
+{{- else }}
+
+{{- if .Values.valkey.existingSecret }}
+{{- fail (printf "valkey.existingSecret is set and replicaCount is %d. Valkey is deployed only for several replicas, so the Secret would be read by nothing - a setting that looks applied and does nothing. Remove it, or set replicaCount above one." (int .Values.replicaCount)) }}
+{{- end }}
+
+{{- end }}

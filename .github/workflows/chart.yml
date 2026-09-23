@@ -57,6 +57,55 @@ jobs:
           helm template kubetower ./charts/kubetower --set serverProfile=true \
             | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
 
+      # Several replicas: the Valkey StatefulSet, its Service and Secret, and
+      # the three variables the console reads. Everything about it is behind
+      # `replicaCount > 1`, so nothing above renders a line of it.
+      - name: Several replicas render, and parse
+        run: |
+          helm lint ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+            --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+              --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+              --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
+            | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          kinds = sorted(d["kind"] + "/" + d["metadata"]["name"] for d in docs)
+          assert "StatefulSet/kubetower-valkey" in kinds, kinds
+          assert "Secret/kubetower-valkey" in kinds, kinds
+          env = {e["name"] for d in docs if d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+          assert {"KT_REPLICATED", "KT_VALKEY_ADDR", "KT_VALKEY_PASSWORD"} <= env, env
+          print(len(docs), "documents parsed, Valkey and its three variables present")'
+
+      # And the ones the chart refuses. Each must fail, and fail naming its
+      # reason: a `fail` nobody has seen fire is a refusal nobody knows is
+      # connected - the rbac check below runs its --self-test for the same
+      # reason.
+      - name: Incoherent replica configurations are refused
+        run: |
+          set -u
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          refused() {
+            want="$1"; shift
+            if out=$(helm template kubetower ./charts/kubetower "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            echo "$out" | grep -q "$want" || { echo "refused without naming '$want': $out"; exit 1; }
+            echo "refused, naming '$want': $*"
+          }
+          refused "persistence.enabled is true" --set replicaCount=2 $oidc
+          refused "serverProfile is false" --set replicaCount=2 --set persistence.enabled=false --set serverProfile=false $oidc
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false --set auth.localAccount=true $oidc
+          refused "read by nothing" --set valkey.existingSecret=mine
+          # The control: the same values made coherent render.
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.passwordHash='$2a$12$abcdefghijklmnopqrstuv' > /dev/null
+          echo "the coherent configurations render"
+
   rbac:
     name: the ClusterRole grants nothing it should not
     runs-on: ubuntu-latest
