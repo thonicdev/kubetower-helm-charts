@@ -1,4 +1,3 @@
-{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{- /*
 Valkey's configuration, everything but the password. A file of its own so
 that the StatefulSet's checksum covers the whole of it: any line changed here
