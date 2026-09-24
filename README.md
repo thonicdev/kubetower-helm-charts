@@ -90,14 +90,15 @@ The password may contain any bytes: the init container writes it escaped into
 Valkey's configuration, and `test/valkey-password-check.py` runs the rendered
 script in the pinned image with a quote, a backslash, a newline and an attempt
 to add a directive. An empty password is refused, because an empty
-`requirepass` turns authentication off.
+`requirepass` turns authentication off, and so is one above 16384 bytes, which
+Valkey would start with and then never authenticate.
 
 **Valkey's password is readable by everybody who signs in**, with the default
 `rbac.readSecrets`, and nothing restricts who can connect to Valkey. The
-records there are sealed with the session key — which that same read reaches in
-this release's own Secret. So the Valkey password adds the power to delete every
-record and sign everybody out, and nothing the Secrets read had not already
-given.
+sessions and plans there are sealed with the session key — which that same read
+reaches in this release's own Secret. So the Valkey password adds the power to
+delete every record, which signs everybody out and forgets which sign-in codes
+were used, and nothing the Secrets read had not already given.
 
 ```bash
 helm install kubetower ./charts/kubetower -n kubetower --create-namespace \
