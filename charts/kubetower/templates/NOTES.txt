@@ -91,9 +91,30 @@ at once are one user as far as the cluster is concerned.
    Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
    Event archive, settings ... {{ if .Values.persistence.enabled }}kept in the PersistentVolumeClaim{{ else }}NO - persistence is off, so the console offers neither{{ end }}
 
+{{- if include "kubetower.several" . }}
+
+   SEVERAL REPLICAS ({{ .Values.replicaCount }}): the consoles share their sessions,
+   confirmation plans and a short-lived marker per completed sign-in through Valkey
+   ({{ include "kubetower.valkeyName" . }}). What only one pod could hold is not offered:
+   the rail, column and density preferences cannot be changed, the settings
+   are read-only, port-forwards are off, and there is no archive. A restart of
+   the Valkey pod signs everybody out.
+{{- if not .Values.valkey.existingSecret }}
+
+   Its password was drawn by this chart and is read back on every upgrade. A
+   `helm template` or a GitOps tool rendering without a cluster cannot read it
+   back and draws a new one each time, and so does the session key: every pod
+   then restarts on each sync and everybody is signed out. Use
+   valkey.existingSecret there, and auth.sessionSecret or auth.existingSecret.
+{{- end }}
+{{- end }}
+
 4. CHECK IT CAME UP
 
    kubectl --context <your-context> -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- if include "kubetower.several" . }}
+   kubectl --context <your-context> -n {{ .Release.Namespace }} get statefulset {{ include "kubetower.valkeyName" . }}
+{{- end }}
    kubectl --context <your-context> -n {{ .Release.Namespace }} logs deploy/{{ include "kubetower.fullname" . }}
 
    /readyz is a real readiness signal: it goes unready when the kubeconfig

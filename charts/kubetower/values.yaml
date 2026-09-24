@@ -44,9 +44,22 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
-# One. The state directory is a ReadWriteOnce volume and the process holds the
-# forward table in memory, so a second pod is a second console with a different
-# answer, not a spare.
+# One by default. Above one, the chart also deploys a small Valkey (see
+# `valkey` at the end of this file) through which the consoles share their
+# sessions, confirmation plans and a short-lived marker per completed sign-in -
+# so a session opened on one pod is valid on the next. A sign-in in progress
+# travels in a sealed cookie in the browser, so it finishes through any pod.
+#
+# **What several replicas cost**, because it is not only more pods: each
+# console's state directory is its own, so the console does not offer what only
+# one pod could hold - the preference writes (rail, columns, density), the
+# settings writes, the per-cluster extension switches and port-forwards are not
+# registered, and the archive is off. Every replica draws the defaults.
+#
+# **Refused at install** rather than half-working: several replicas with
+# `persistence.enabled` (one volume cannot be two consoles' state), with
+# `serverProfile: false`, or with the shared password offered and no
+# `auth.passwordHash` (each pod would draw its own).
 replicaCount: 1
 
 nameOverride: ""
@@ -416,3 +429,80 @@ affinity: {}
 
 extraVolumes: []
 extraVolumeMounts: []
+
+# ---------------------------------------------------------------------------
+# Several replicas: the Valkey they share
+# ---------------------------------------------------------------------------
+#
+# Deployed only when replicaCount is above one: a StatefulSet of one, a Service,
+# a ConfigMap and a Secret. It holds nothing on disk, so a restart of it signs
+# everybody out - one click each while the identity provider's own session is
+# alive, which is what a restart of a single console costs too. The sessions
+# and plans the consoles write into it are sealed with the session key, which
+# Valkey never sees; a sign-in marker is a hash.
+#
+# **Its password is a Secret like any other**, so with the default
+# rbac.readSecrets anybody who signs in can read it from the Secrets page and,
+# with no NetworkPolicy in the way, connect to Valkey. What they find there is
+# sealed or hashed; but the session key sits in this release's own Secret,
+# which the same read reaches (see rbac.readSecrets). The Valkey password adds
+# the power to delete every record - signing everybody out and forgetting which
+# sign-in codes were used - and nothing that the Secrets read had not already
+# given.
+valkey:
+  image:
+    # The official image, BSD-3-Clause. Pinned by tag and by digest; the tag is
+    # for a reader, the digest is what is pulled.
+    repository: valkey/valkey
+    tag: "9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
+    pullPolicy: IfNotPresent
+
+  # The password. **Empty means the chart draws one on the first install and
+  # reads it back on every upgrade** (`lookup` on the Secret it wrote), so an
+  # upgrade keeps it and signs nobody out.
+  #
+  # `lookup` answers only when Helm talks to a cluster: `helm template`,
+  # `--dry-run` and GitOps tools that render without one (Argo CD among them)
+  # see no Secret and draw a new password on every render. Applied, that
+  # changes the Secret on every sync. Valkey and every console carry a checksum
+  # of it, so all of them restart together rather than some keeping the old
+  # password while pods started later use the new one - which would fail
+  # requests on whichever pod was out of step. The cost is that each sync
+  # signs everybody out. **Under those tools, name a Secret you manage here,
+  # and set auth.sessionSecret or auth.existingSecret too**: the session key is
+  # drawn the same way, and several consoles must share it.
+  #
+  # Any bytes are carried: the init container writes each one escaped into
+  # Valkey's configuration, so a quote or a newline cannot end the line or add
+  # a directive. An empty password is refused, because an empty requirepass
+  # turns authentication off. Rotating the password inside a Secret you manage
+  # needs a `kubectl rollout restart` of Valkey and of the consoles: the
+  # chart hashes that Secret's name, not its contents, which it cannot read.
+  existingSecret: ""
+  existingSecretKey: password
+
+  service:
+    port: 6379
+
+  # Valkey's own ceiling, below the container's memory limit, so that its
+  # memory stays bounded. At the ceiling the key nearest its expiry goes first:
+  # under pressure the short-lived sign-in markers and plans go long before a
+  # session.
+  maxmemory: 48mb
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 96Mi
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  nodeSelector: {}
+  tolerations: []

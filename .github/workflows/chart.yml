@@ -60,6 +60,65 @@ jobs:
           helm template kubetower ./charts/kubetower --set serverProfile=true \
             | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
 
+      # Several replicas: the Valkey StatefulSet, its Service and Secret, and
+      # the three variables the console reads. Everything about it is behind
+      # `replicaCount > 1`, so nothing above renders a line of it.
+      - name: Several replicas render, and parse
+        run: |
+          helm lint ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+            --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+              --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+              --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
+            | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          kinds = sorted(d["kind"] + "/" + d["metadata"]["name"] for d in docs)
+          assert "StatefulSet/kubetower-valkey" in kinds, kinds
+          assert "Secret/kubetower-valkey" in kinds, kinds
+          env = {e["name"] for d in docs if d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+          assert {"KT_REPLICATED", "KT_VALKEY_ADDR", "KT_VALKEY_PASSWORD"} <= env, env
+          print(len(docs), "documents parsed, Valkey and its three variables present")'
+
+      # And the ones the chart refuses. Each must fail, and fail naming its
+      # reason: a `fail` nobody has seen fire is a refusal nobody knows is
+      # connected - the rbac check below runs its --self-test for the same
+      # reason.
+      - name: Incoherent replica configurations are refused
+        run: |
+          set -u
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          refused() {
+            want="$1"; shift
+            if out=$(helm template kubetower ./charts/kubetower "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            echo "$out" | grep -q "$want" || { echo "refused without naming '$want': $out"; exit 1; }
+            echo "refused, naming '$want': $*"
+          }
+          refused "persistence.enabled is true" --set replicaCount=2 $oidc
+          refused "serverProfile is false" --set replicaCount=2 --set persistence.enabled=false --set serverProfile=false $oidc
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false --set auth.localAccount=true $oidc
+          refused "valkey.existingSecretKey is empty" --set replicaCount=2 --set persistence.enabled=false \
+            --set valkey.existingSecret=mine --set valkey.existingSecretKey= $oidc
+          refused "read by nothing" --set valkey.existingSecret=mine
+          # The control: the same values made coherent render.
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
+          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.passwordHash='$2a$12$abcdefghijklmnopqrstuv' > /dev/null
+          echo "the coherent configurations render"
+
+      # The init container writes the Valkey password into its configuration.
+      # Run exactly as rendered, in the pinned image, with passwords chosen to
+      # break naive quoting. Local docker only; nothing reaches a cluster.
+      - name: Valkey takes any password it can authenticate, and refuses the rest
+        run: |
+          pip install pyyaml
+          python test/valkey-password-check.py
+
       # The pod reads its password hash and session key once, at start, so a
       # Secret that changes under an unchanged Deployment changes nothing.
       - name: A changed credential restarts the pod
@@ -86,6 +145,17 @@ jobs:
             exit 1
           fi
           grep '_drawnSessionSecret' refused.txt
+
+      # The same for the Valkey password's memo, valkey._drawnPassword: set
+      # from outside, it would replace the password already in the cluster
+      # with one of the user's choosing, an empty one included.
+      - name: The Valkey password's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set valkey._drawnPassword=x > /dev/null 2> refused.txt; then
+            echo "::error::a Valkey password set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnPassword' refused.txt
 
   rbac:
     name: the ClusterRole carries no escalation verb and no stray wildcard

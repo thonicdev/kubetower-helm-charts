@@ -1,0 +1,150 @@
+"""Valkey accepts exactly the password it was given, whatever it contains.
+
+    python test/valkey-password-check.py      # needs docker; pulls the pinned image
+
+The init container writes `requirepass` into Valkey's configuration from the
+Secret. A password supplied through valkey.existingSecret is the operator's
+and may contain anything; written naively inside double quotes, a quote ends
+the string, a newline starts a directive of its own, and Valkey either refuses
+to start or runs with a configuration nobody wrote.
+
+This renders the chart, takes the ConfigMap and the init container's script
+exactly as rendered, and runs both in the pinned Valkey image with passwords
+chosen to break it. For each it asserts that Valkey started, that the password
+authenticates, and that no password does not. It also asserts that an empty
+password is refused, because an empty requirepass turns authentication off,
+and that one above 16384 bytes is refused, because Valkey starts with it and
+then refuses every AUTH that carries it.
+
+Nothing here reaches a cluster: it is `helm template` and a local container.
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+
+import yaml
+
+CHART = "./charts/kubetower"
+SEVERAL = [
+    "replicaCount=2", "persistence.enabled=false",
+    "auth.oidc.issuer=https://idp.example/dex", "auth.oidc.clientID=kubetower",
+    "auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback",
+]
+
+PASSWORDS = {
+    "letters and digits": "plainAlnum0123456789",
+    "a quote, a backslash, a newline, a space, an apostrophe": 'a"b\\c\nd e\'f',
+    "a line that tries to add a directive": 'x"\nprotected-mode no\n#',
+    "something that looks like an escape": '\\x41\\n"',
+    # The largest Valkey authenticates: 16384 bytes, the last in two-byte
+    # characters so that the limit is seen to count bytes.
+    "16384 bytes, the most Valkey authenticates": "a" * 16384,
+    "16384 bytes of two-byte characters": "é" * 8192,
+}
+
+# One byte over, in either shape: Valkey would start and then refuse every
+# AUTH with "unauthenticated bulk length", so the script must refuse first.
+TOO_LONG = {
+    "16385 bytes": "a" * 16385,
+    "8193 two-byte characters, 16386 bytes": "é" * 8193,
+}
+
+PROBE = r'''
+valkey-server /config/valkey.conf > /tmp/valkey.log 2>&1 &
+i=0
+until valkey-cli ping 2>&1 | grep -qv 'Could not connect'; do
+  i=$((i + 1))
+  if [ $i -ge 50 ]; then echo "STARTED:no"; tail -5 /tmp/valkey.log; exit 0; fi
+  sleep 0.1
+done
+echo "STARTED:yes"
+echo "AUTHED:$(VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli ping 2>&1 | tr -d '\n')"
+echo "ANON:$(valkey-cli ping 2>&1 | tr -d '\n')"
+'''
+
+
+def rendered():
+    out = subprocess.run(
+        ["helm", "template", "kubetower", CHART] + [a for s in SEVERAL for a in ("--set", s)],
+        capture_output=True, check=True).stdout.decode()
+    docs = [d for d in yaml.safe_load_all(out) if d]
+    conf = next(d for d in docs if d["kind"] == "ConfigMap"
+                and "valkey.conf" in d.get("data", {}))["data"]["valkey.conf"]
+    sts = next(d for d in docs if d["kind"] == "StatefulSet")
+    init = sts["spec"]["template"]["spec"]["initContainers"][0]
+    if init["command"][:2] != ["sh", "-c"]:
+        raise SystemExit(f"the init container is no longer `sh -c`: {init['command'][:2]}")
+    return conf, init["command"][2], init["image"]
+
+
+def run(image, script, password):
+    env = dict(os.environ, VALKEY_PASSWORD=password)
+    # -e NAME with no value passes the variable through from this process's
+    # environment, so the password is never on docker's own command line.
+    return subprocess.run(
+        ["docker", "run", "-i", "--rm", "-e", "VALKEY_PASSWORD", image, "sh", "-s"],
+        input=script.encode(), capture_output=True, env=env, timeout=120)
+
+
+if __name__ == "__main__":
+    conf, init, image = rendered()
+    setup = ("mkdir -p /defaults /config /data\n"
+             "cat > /defaults/valkey.conf <<'__KT_CONF__'\n" + conf + "__KT_CONF__\n")
+    failures = []
+    for name, password in PASSWORDS.items():
+        done = run(image, setup + init + "\n" + PROBE, password)
+        out = done.stdout.decode(errors="replace")
+        lines = dict(l.split(":", 1) for l in out.splitlines() if ":" in l)
+        ok = (done.returncode == 0 and lines.get("STARTED") == "yes"
+              and lines.get("AUTHED") == "PONG" and "NOAUTH" in lines.get("ANON", ""))
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            failures.append(name)
+            print("        " + (out + done.stderr.decode(errors="replace")).replace("\n", "\n        "))
+
+    empty = run(image, setup + init + "\necho WROTE\n", "")
+    refused = empty.returncode != 0 and b"WROTE" not in empty.stdout \
+        and b"password is empty" in empty.stderr
+    print(f"{'ok  ' if refused else 'FAIL'}  an empty password is refused")
+    if not refused:
+        failures.append("empty")
+
+    # A shell does not stop on a failure inside a pipe, so a missing encoder
+    # would produce an empty encoding - and an empty requirepass is no
+    # password at all. Simulated by shadowing od with a function that fails.
+    broken = run(image, setup + "od() { return 127; }\n" + init + "\necho WROTE\n",
+                 PASSWORDS["letters and digits"])
+    refused = broken.returncode != 0 and b"WROTE" not in broken.stdout \
+        and b"could not be encoded" in broken.stderr
+    print(f"{'ok  ' if refused else 'FAIL'}  a failed encoding is refused, not written as no password")
+    if not refused:
+        failures.append("failed encoding")
+
+    for name, password in TOO_LONG.items():
+        long = run(image, setup + init + "\necho WROTE\n", password)
+        refused = long.returncode != 0 and b"WROTE" not in long.stdout \
+            and b"refuses to authenticate one above 16384" in long.stderr
+        print(f"{'ok  ' if refused else 'FAIL'}  a password of {name} is refused")
+        if not refused:
+            failures.append(name)
+            print("        " + long.stderr.decode(errors="replace").strip()[:300])
+
+    # The script does not look for a NUL byte because it cannot receive one:
+    # the runtime refuses to start the process. That is a property of runc
+    # rather than of this chart, so it is asserted rather than assumed.
+    with tempfile.NamedTemporaryFile("wb", suffix=".env", delete=False) as f:
+        f.write(b"VALKEY_PASSWORD=ab\x00cd\n")
+    try:
+        nul = subprocess.run(["docker", "run", "--rm", "--env-file", f.name, image,
+                              "sh", "-c", "echo STARTED"], capture_output=True, timeout=120)
+    finally:
+        os.unlink(f.name)
+    refused = nul.returncode != 0 and b"STARTED" not in nul.stdout \
+        and b"nul byte" in nul.stderr
+    print(f"{'ok  ' if refused else 'FAIL'}  a NUL byte never reaches the script: the container does not start")
+    if not refused:
+        failures.append("nul byte")
+        print("        " + nul.stderr.decode(errors="replace").strip()[:300])
+    sys.exit(1 if failures else 0)
