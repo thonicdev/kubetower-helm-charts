@@ -87,6 +87,15 @@ spec:
           # authentication off - and so is an empty encoding, which is what a
           # pipeline with a missing tool would produce, since a shell does not
           # stop on a failure inside a pipe.
+          #
+          # And one above 16384 bytes is refused: Valkey accepts it in the file
+          # and starts, then answers every AUTH with it "Protocol error:
+          # unauthenticated bulk length" - a store no console can sign in to.
+          # Counted from the encoding, four characters a byte, so it is bytes
+          # and not characters. A NUL byte cannot reach this script: runc
+          # refuses to start a process whose environment holds one ("contains
+          # nul byte"), so such a Secret fails the start rather than arriving
+          # shortened, and there is nothing here to check.
           command:
             - sh
             - -c
@@ -95,6 +104,8 @@ spec:
               [ -n "$VALKEY_PASSWORD" ] || { echo "the Valkey password is empty" >&2; exit 1; }
               escaped=$(printf '%s' "$VALKEY_PASSWORD" | od -An -tx1 -v | tr -d ' \n' | sed 's/../\\x&/g')
               [ -n "$escaped" ] || { echo "the Valkey password could not be encoded" >&2; exit 1; }
+              bytes=$((${#escaped} / 4))
+              [ "$bytes" -le 16384 ] || { echo "the Valkey password is $bytes bytes, and Valkey refuses to authenticate one above 16384 - use a shorter one" >&2; exit 1; }
               umask 077
               {
                 cat /defaults/valkey.conf

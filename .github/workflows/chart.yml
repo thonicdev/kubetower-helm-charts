@@ -114,7 +114,7 @@ jobs:
       # The init container writes the Valkey password into its configuration.
       # Run exactly as rendered, in the pinned image, with passwords chosen to
       # break naive quoting. Local docker only; nothing reaches a cluster.
-      - name: Valkey takes any password, and refuses an empty one
+      - name: Valkey takes any password it can authenticate, and refuses the rest
         run: |
           pip install pyyaml
           python test/valkey-password-check.py

@@ -12,7 +12,9 @@ This renders the chart, takes the ConfigMap and the init container's script
 exactly as rendered, and runs both in the pinned Valkey image with passwords
 chosen to break it. For each it asserts that Valkey started, that the password
 authenticates, and that no password does not. It also asserts that an empty
-password is refused, because an empty requirepass turns authentication off.
+password is refused, because an empty requirepass turns authentication off,
+and that one above 16384 bytes is refused, because Valkey starts with it and
+then refuses every AUTH that carries it.
 
 Nothing here reaches a cluster: it is `helm template` and a local container.
 """
@@ -20,6 +22,7 @@ Nothing here reaches a cluster: it is `helm template` and a local container.
 import os
 import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -35,6 +38,17 @@ PASSWORDS = {
     "a quote, a backslash, a newline, a space, an apostrophe": 'a"b\\c\nd e\'f',
     "a line that tries to add a directive": 'x"\nprotected-mode no\n#',
     "something that looks like an escape": '\\x41\\n"',
+    # The largest Valkey authenticates: 16384 bytes, the last in two-byte
+    # characters so that the limit is seen to count bytes.
+    "16384 bytes, the most Valkey authenticates": "a" * 16384,
+    "16384 bytes of two-byte characters": "é" * 8192,
+}
+
+# One byte over, in either shape: Valkey would start and then refuse every
+# AUTH with "unauthenticated bulk length", so the script must refuse first.
+TOO_LONG = {
+    "16385 bytes": "a" * 16385,
+    "8193 two-byte characters, 16386 bytes": "é" * 8193,
 }
 
 PROBE = r'''
@@ -107,4 +121,30 @@ if __name__ == "__main__":
     print(f"{'ok  ' if refused else 'FAIL'}  a failed encoding is refused, not written as no password")
     if not refused:
         failures.append("failed encoding")
+
+    for name, password in TOO_LONG.items():
+        long = run(image, setup + init + "\necho WROTE\n", password)
+        refused = long.returncode != 0 and b"WROTE" not in long.stdout \
+            and b"refuses to authenticate one above 16384" in long.stderr
+        print(f"{'ok  ' if refused else 'FAIL'}  a password of {name} is refused")
+        if not refused:
+            failures.append(name)
+            print("        " + long.stderr.decode(errors="replace").strip()[:300])
+
+    # The script does not look for a NUL byte because it cannot receive one:
+    # the runtime refuses to start the process. That is a property of runc
+    # rather than of this chart, so it is asserted rather than assumed.
+    with tempfile.NamedTemporaryFile("wb", suffix=".env", delete=False) as f:
+        f.write(b"VALKEY_PASSWORD=ab\x00cd\n")
+    try:
+        nul = subprocess.run(["docker", "run", "--rm", "--env-file", f.name, image,
+                              "sh", "-c", "echo STARTED"], capture_output=True, timeout=120)
+    finally:
+        os.unlink(f.name)
+    refused = nul.returncode != 0 and b"STARTED" not in nul.stdout \
+        and b"nul byte" in nul.stderr
+    print(f"{'ok  ' if refused else 'FAIL'}  a NUL byte never reaches the script: the container does not start")
+    if not refused:
+        failures.append("nul byte")
+        print("        " + nul.stderr.decode(errors="replace").strip()[:300])
     sys.exit(1 if failures else 0)
