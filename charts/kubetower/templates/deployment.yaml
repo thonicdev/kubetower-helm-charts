@@ -91,6 +91,13 @@ spec:
               value: ":5823"
             - name: KT_STATE_DIR
               value: /var/lib/kubetower
+            # Whether that directory survives a restart. The console cannot
+            # tell an emptyDir from a volume - both answer every write - so it
+            # is told, on every install and both ways. False, and it offers no
+            # archive and no setting kept there, rather than a retention it
+            # will forget at the next start.
+            - name: KT_STATE_PERSISTENT
+              value: {{ .Values.persistence.enabled | quote }}
             {{- if .Values.kubeconfig.generate }}
             - name: KUBECONFIG
               value: /etc/kubetower/kubeconfig/config
@@ -223,9 +230,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim | default (printf "%s-state" (include "kubetower.fullname" .)) }}
           {{- else }}
-          # No PVC: the hotbars and - when auth.passwordHash is empty - the
-          # drawn password go with the pod. Stated rather than hidden, because
-          # "the password changed on its own" is the symptom.
+          # No PVC: the rail, the columns and the names go with the pod, and
+          # the console - told so by KT_STATE_PERSISTENT above - offers no
+          # archive and no saved setting. A drawn password cannot be what goes
+          # with it: check-persistence.yaml refuses that combination.
           emptyDir: {}
           {{- end }}
         {{- if .Values.kubeconfig.generate }}

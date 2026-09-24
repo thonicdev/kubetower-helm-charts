@@ -85,6 +85,20 @@ password hash if you set one), ConfigMap (the kubeconfig), PersistentVolumeClaim
 off because an Ingress in front of this publishes cluster credentials behind one
 shared password.
 
+### Without persistence
+
+`persistence.enabled: false` puts the state directory on an emptyDir, and the
+chart tells the console so (`KT_STATE_PERSISTENT`) - it cannot see a volume
+for itself. The console then offers nothing that would not survive a restart:
+no event archive, no archive settings and no node-shell image setting, absent
+from the Settings page and from its API rather than offered and forgotten. The
+rail and the column layouts still work, for as long as the pod runs.
+
+**It is refused with a password the console would draw for itself**, because
+every restart would draw a new one. Turning persistence off needs
+`auth.passwordHash`, `auth.existingSecret`, or single sign-on with
+`auth.localAccount: false`. `test/persistence-check.py` holds both halves.
+
 ### The kubeconfig is the trick
 
 The binary reads `KUBECONFIG` and has no in-cluster path of its own. The chart
