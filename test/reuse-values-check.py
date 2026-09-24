@@ -15,7 +15,8 @@ This renders the chart twice for each case below:
   test/fixtures/first-release-values.yaml, the values of this chart's first
   version, so every value added since is missing;
 - **as a fresh install would**: the chart as it is, with the same fixture
-  given through -f, so every value added since takes its default.
+  given through -f, so every value added since takes its default - with the
+  fill switched off, since nothing is missing there.
 
 It asserts that both render, and that they render the same objects and the
 same NOTES. Absent must mean the default, not a different behaviour. The
@@ -34,6 +35,7 @@ import difflib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +93,17 @@ def copy_chart(dest, values):
     shutil.copytree(CHART, dest)
     if values is not None:
         shutil.copyfile(values, dest / "values.yaml")
+    else:
+        # The fresh render is the reference, so its fill is switched off:
+        # nothing is missing there, and a fill that replaced a value present
+        # would otherwise change both renders alike and pass unseen.
+        later = dest / "templates" / "_later-defaults.tpl"
+        text, n = re.subn(
+            r'(\{\{- define "kubetower\.fillLaterDefaults" -\}\}).*?(\{\{- end \}\})',
+            r"\1\2", later.read_text(encoding="utf-8"), flags=re.S)
+        if n != 1:
+            raise SystemExit("kubetower.fillLaterDefaults not found, so it cannot be switched off")
+        later.write_text(text, encoding="utf-8")
     (dest / "templates" / "zz-rendered-notes.yaml").write_text(NOTES_AS_OBJECT)
     (dest / "templates" / "zz-rendered-later-defaults.yaml").write_text(LATER_AS_OBJECT)
 
