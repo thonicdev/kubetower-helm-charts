@@ -1,0 +1,107 @@
+# The values a release installed from this chart's first version holds, and
+# so what `helm upgrade --reuse-values` renders every later version with:
+# that flag replaces the new chart's defaults with these rather than merging
+# them. Comments stripped; nothing else changed. Never edit it to match the
+# chart - it is the past, and test/reuse-values-check.py exists to prove that
+# every value added since renders as its default when it is absent here.
+image:
+  repository: kubetower
+  tag: ''
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+replicaCount: 1
+nameOverride: ''
+fullnameOverride: ''
+kubeconfig:
+  generate: true
+  contextName: in-cluster
+  server: https://kubernetes.default.svc
+serviceAccount:
+  create: true
+  name: ''
+  annotations: {}
+  automountToken: false
+rbac:
+  create: true
+  read: true
+  readSecrets: true
+  customResources: false
+  write: false
+  exec: false
+  nodeProxy: false
+  metrics: true
+serverProfile: false
+auth:
+  user: admin
+  passwordHash: ''
+  existingSecret: ''
+  sessionSecret: ''
+  sessionTTL: 8h
+  sessionMax: 24h
+forwardPorts: 30000-30031
+readonlyClusters: ''
+diagnostics: ''
+claude:
+  readOnly: true
+  permissionMode: ''
+extraEnv: []
+persistence:
+  enabled: true
+  storageClass: ''
+  accessModes:
+  - ReadWriteOnce
+  size: 1Gi
+  existingClaim: ''
+service:
+  type: ClusterIP
+  port: 5823
+  annotations: {}
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  hosts:
+  - host: kubetower.local
+    paths:
+    - path: /
+      pathType: Prefix
+  tls: []
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraVolumes: []
+extraVolumeMounts: []
+
