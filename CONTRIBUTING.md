@@ -40,6 +40,9 @@ advance is the only reason this file leads with it.
   allowed scopes are in `commitlint.config.js`.
 - **Run the checks**: `helm lint ./charts/kubetower`,
   `python test/rbac-check.py --self-test`, `python test/checksum-check.py`
-  and `bash test/public-check.sh --self-test && bash test/public-check.sh tree`.
+  `bash test/public-check.sh --self-test && bash test/public-check.sh tree`
+  and `bash test/attribution-check.sh --self-test`. The last two also read the
+  pull request's title and description, because the squash merge makes the
+  description the commit message on `main`.
 - **Say what you did not test.** The list above exists because nobody has;
   a change that leaves one of them untested is fine, and saying so is required.
