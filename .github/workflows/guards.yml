@@ -1,5 +1,5 @@
-# Two gates over every pull request: no machine attribution in the history, and
-# Conventional Commits on the messages and on the title.
+# Two gates over every pull request: no machine attribution in the history or
+# the description, and Conventional Commits on the messages and on the title.
 #
 # The attribution job exists because this project is dual-licensed, which is
 # lawful only while the copyright holder is the sole author - so the git history
@@ -22,14 +22,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # First the proof that it can fail: planted attribution in a description
+      # and in a commit must both be refused.
+      - name: The check refuses what it is meant to refuse
+        run: bash test/attribution-check.sh --self-test
       - name: Refuse machine attribution in the commit range
+        env:
+          BASE: ${{ github.base_ref }}
+        run: bash test/attribution-check.sh commits "origin/$BASE..HEAD"
+      # The squash message here is the title and the description, so the
+      # description is what reaches `main` - and it is where a tool writes its
+      # "generated with" line. Through `env:`, never `${{ }}` inside `run:`:
+      # the description is somebody else's text. `edited` above reruns this
+      # when it changes.
+      - name: Refuse machine attribution in the title or description
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
         run: |
-          range="origin/${{ github.base_ref }}..HEAD"
-          if git log --format='%B' "$range" \
-             | grep -inE 'co-authored-by:.*(claude|anthropic)|generated with .*claude'; then
-            echo "::error::a commit in this range names a machine as co-author or generator"
-            exit 1
-          fi
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/attribution-check.sh message "pull request description"
       - name: Report every author and committer in the range
         run: git log --format='%an <%ae>%n%cn <%ce>' "origin/${{ github.base_ref }}..HEAD" | sort -u
 
