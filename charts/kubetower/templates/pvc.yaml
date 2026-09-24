@@ -1,4 +1,3 @@
-{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
