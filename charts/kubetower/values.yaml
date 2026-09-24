@@ -418,17 +418,18 @@ extraVolumeMounts: []
 # Deployed only when replicaCount is above one: a StatefulSet of one, a Service,
 # a ConfigMap and a Secret. It holds nothing on disk, so a restart of it signs
 # everybody out - one click each while the identity provider's own session is
-# alive, which is what a restart of a single console costs too. Every value the
-# consoles write into it is sealed with the session key, which Valkey never
-# sees.
+# alive, which is what a restart of a single console costs too. The sessions
+# and plans the consoles write into it are sealed with the session key, which
+# Valkey never sees; a sign-in marker is a hash.
 #
 # **Its password is a Secret like any other**, so with the default
 # rbac.readSecrets anybody who signs in can read it from the Secrets page and,
 # with no NetworkPolicy in the way, connect to Valkey. What they find there is
-# sealed; but the key it is sealed with sits in this release's own Secret,
+# sealed or hashed; but the session key sits in this release's own Secret,
 # which the same read reaches (see rbac.readSecrets). The Valkey password adds
-# the power to delete every record and sign everybody out, and nothing that the
-# Secrets read had not already given.
+# the power to delete every record - signing everybody out and forgetting which
+# sign-in codes were used - and nothing that the Secrets read had not already
+# given.
 valkey:
   image:
     # The official image, BSD-3-Clause. Pinned by tag and by digest; the tag is
