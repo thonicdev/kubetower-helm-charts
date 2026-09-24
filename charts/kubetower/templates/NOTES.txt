@@ -68,8 +68,8 @@ at once are one user as far as the cluster is concerned.
 
      kubectl --context <your-context> -n {{ .Release.Namespace }} logs deploy/{{ include "kubetower.fullname" . }} | grep -i password
 
-   It is printed once. {{ if .Values.persistence.enabled }}It is kept in the PersistentVolumeClaim, so a restart
-   keeps it.{{ else }}persistence is OFF, so a restart draws a NEW one and the old is gone.{{ end }}
+   It is printed once, and kept in the PersistentVolumeClaim, so a restart
+   keeps it. (Persistence off with a drawn password is refused at install.)
 {{- end }}
 {{- if .Values.auth.oidc.issuer }}
 
@@ -89,6 +89,7 @@ at once are one user as far as the cluster is concerned.
    Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone with the password{{ else }}no - rbac.write is false{{ end }}
    Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone with the password{{ else }}no - rbac.exec is false{{ end }}
    Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
+   Event archive, settings ... {{ if .Values.persistence.enabled }}kept in the PersistentVolumeClaim{{ else }}NO - persistence is off, so the console offers neither{{ end }}
 
 {{- if include "kubetower.several" . }}
 

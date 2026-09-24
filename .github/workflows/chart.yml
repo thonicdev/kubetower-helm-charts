@@ -169,6 +169,17 @@ jobs:
       # is connected.
       - run: python test/rbac-check.py --self-test
 
+  persistence:
+    name: the console is told whether its state survives, and a drawn password needs it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: pip install pyyaml
+      # --self-test first, for the rbac job's reason: it renders the chart with
+      # the refusal removed and fails unless exactly the refusal cases fail.
+      - run: python test/persistence-check.py --self-test
+
   public:
     name: nothing here cites what a stranger cannot open
     runs-on: ubuntu-latest
