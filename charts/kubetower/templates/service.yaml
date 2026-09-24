@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 apiVersion: v1
 kind: Service
 metadata:

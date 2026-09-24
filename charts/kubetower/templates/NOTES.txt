@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 KubeTower {{ .Chart.AppVersion }} is installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
 
 WHAT YOU JUST DEPLOYED

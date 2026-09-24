@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{- if .Values.rbac.create }}
 {{/*
 The console's permissions.
