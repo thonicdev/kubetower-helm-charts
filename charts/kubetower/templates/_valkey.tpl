@@ -56,7 +56,9 @@ would fail on whichever pod was out of step. Under those tools, set
 auth.existingSecret too, for the same reason.
 
 Drawn once per render and remembered for the rest of it, so the Secret and the
-checksums over it describe the same password.
+checksums over it describe the same password. The memo is in the values,
+which a user can write to as well, so values.schema.json refuses
+valkey._drawnPassword before rendering starts.
 */}}
 {{- define "kubetower.valkeyPassword" -}}
 {{- if not (hasKey .Values.valkey "_drawnPassword") }}

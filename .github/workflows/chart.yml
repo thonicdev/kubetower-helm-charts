@@ -146,6 +146,17 @@ jobs:
           fi
           grep '_drawnSessionSecret' refused.txt
 
+      # The same for the Valkey password's memo, valkey._drawnPassword: set
+      # from outside, it would replace the password already in the cluster
+      # with one of the user's choosing, an empty one included.
+      - name: The Valkey password's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set valkey._drawnPassword=x > /dev/null 2> refused.txt; then
+            echo "::error::a Valkey password set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnPassword' refused.txt
+
   rbac:
     name: the ClusterRole carries no escalation verb and no stray wildcard
     runs-on: ubuntu-latest
