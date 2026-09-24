@@ -27,7 +27,15 @@ is. Every consequence follows from that:
 - **One identity.** The console acts as the pod's ServiceAccount. Two people
   signed in are one subject in the API server's audit log.
 - **One password**, and a stateless session cookie. Signing one person out means
-  rotating `KT_SESSION_SECRET`, which signs everybody out.
+  rotating `KT_SESSION_SECRET`, which signs everybody out. **With `auth.oidc`
+  set, this one changes**: people sign in through the identity provider as
+  themselves, each with a session of their own. The shared password is then
+  gone unless `auth.localAccount` keeps it. The line above still holds: they
+  all act as the one ServiceAccount. **And everybody the provider will issue a
+  token to for this client is admitted**, with the pod's full rights — the
+  console keeps no list of who may sign in. With the default read of Secrets,
+  a broad provider means every account holder reads every Secret. Restrict
+  who may use the client at the provider.
 - **The terminal is the pod's terminal.** With `rbac.exec` on, anybody who knows
   the password gets a shell in any pod, holding this ServiceAccount.
 - **The port-forward cap is per process**, so its 16 forwards are shared by
@@ -61,6 +69,13 @@ helm install kubetower ./charts/kubetower \
 
 Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
 prints all three commands with your values filled in.
+
+## Upgrading
+
+Upgrade with `helm upgrade --reset-then-reuse-values` (Helm 3.14 or later), or
+pass your values file again with `-f`. Plain `--reuse-values` keeps only the
+values the previous release stored, so any key a newer chart adds is missing,
+and the render comes out wrong or fails.
 
 ## What it deploys
 
@@ -145,13 +160,28 @@ shell the desktop profile keeps is a shell holding this pod's ServiceAccount.
 ## The OIDC fixture
 
 `test/oidc/` is a [Dex](https://dexidp.io), for developing single sign-on
-against a real issuer. **It is not part of the chart and the console cannot use
-it** — there is no OIDC code to point at it yet.
+against a real issuer. **It is not part of the chart.** A console image built
+with single sign-on signs in through it with the `auth.oidc` values below.
 
 ```bash
 kubectl apply -f test/oidc/dex.yaml
-kubectl -n dex port-forward svc/dex 5556:5556
-python test/oidc/try.py            # opens http://localhost:5555
+kubectl -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
+python test/oidc/try.py            # opens http://localhost:5555, a raw token
+```
+
+And the console itself, with its client secret in a Secret rather than in the
+values:
+
+```bash
+kubectl -n kubetower create secret generic kubetower-oidc --from-literal=client-secret=kubetower-dev-secret
+helm upgrade --install kubetower ./charts/kubetower -n kubetower \
+  --set auth.oidc.issuer=http://host.docker.internal:5556/dex \
+  --set auth.oidc.clientID=kubetower \
+  --set auth.oidc.clientSecret.existingSecret=kubetower-oidc \
+  --set auth.oidc.redirectURL=http://127.0.0.1:8824/api/auth/oidc/callback \
+  --set auth.oidc.scopes=openid\,email\,profile\,groups \
+  --set auth.oidc.groupsPrefix=oidc:
+kubectl -n kubetower port-forward svc/kubetower 8824:5823   # then http://127.0.0.1:8824
 ```
 
 Two connectors, and the difference between them is the finding:
@@ -165,16 +195,27 @@ Dex's static password database carries no groups. So a group-to-RBAC mapping
 cannot be developed against static users — it needs the mock connector, or a
 real identity provider.
 
-**The issuer is the trap.** It is `http://localhost:5556/dex`, which the console
-and the browser both see only when the console runs on the host. Reaching it
-from inside the cluster needs the discovery URL and the issuer to be set
-separately.
+**The issuer is the trap.** A token's `iss` must be the exact string the console
+expects, and the browser and the pod reach the provider at different addresses.
+The fixture's issuer is `http://host.docker.internal:5556/dex`, which Docker
+Desktop resolves both on the host and inside the cluster. So one string works
+for both sides, and `--address 0.0.0.0` is there because the browser dials the
+host's own address rather than loopback. That publishes Dex on the host's
+network while the port-forward runs, so stop it afterwards. Where the two
+addresses really differ, `auth.oidc.discoveryURL` is where the pod fetches
+discovery from, and the issuer stays what the browser sees.
 
 ## What this chart does not do
 
 - No published image, no registry, no chart repository, no `helm package`.
-- No OIDC, no per-user identity, no multi-tenancy. There is nothing in the
-  binary to wire them to.
+- No per-person authorisation. With `auth.oidc` set, people sign in as
+  themselves, but the console does not yet ask the cluster what a person may do,
+  so everyone who can sign in acts as the pod's ServiceAccount — and everyone
+  the provider issues a token to for the client can sign in. Restrict it at the
+  provider; nothing here can. No
+  multi-tenancy. And no group-to-permission mapping, ever: a group reaches a
+  right through a RoleBinding the cluster's owner writes, not through a value
+  here.
 - No NetworkPolicy. The console legitimately talks to the API server, to
   Prometheus by port-forward, and to whatever a forward points at; a policy that
   is honest about that permits nearly everything, and one that is not breaks the

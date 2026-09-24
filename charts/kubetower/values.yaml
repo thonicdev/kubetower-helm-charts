@@ -11,10 +11,15 @@
 # identity and no in-cluster client of its own (`InClusterConfig` appears in no
 # non-test file). Everything that follows from that:
 #
-#   * One password, one session, one identity. There are no users.
-#   * A terminal in the console runs `kubectl` **as this pod's
-#     ServiceAccount**, not as whoever signed in. Whatever RBAC you grant
-#     below, you grant to every person who has the password.
+#   * With no identity provider: one password, one session, one identity.
+#     There are no users. With `auth.oidc` set, people sign in as themselves
+#     and each gets a session of their own - but see the next point, which
+#     holds either way.
+#   * Everything the console does, it does **as this pod's ServiceAccount**,
+#     not as whoever signed in. The console does not yet ask the cluster
+#     whether a person may do a thing, so whatever RBAC you grant below, you
+#     grant to every person who can sign in - through the password or through
+#     the identity provider alike.
 #   * The port-forward cap is per-process. `forwardPorts` is shared by
 #     everybody at once, not per person.
 #   * Revoking access means changing the password and restarting, which signs
@@ -95,7 +100,9 @@ rbac:
   # Secrets page and mint a session cookie of their own - one that survives a
   # password change and ends only when the key is rotated. A ClusterRole
   # cannot grant every Secret but one, so the chart does not pretend to: turn
-  # readSecrets off, or bind a narrower role of your own instead.
+  # readSecrets off, or bind a narrower role of your own instead. With
+  # auth.oidc set, a minted session can carry any name, so the console's
+  # record of who did what is only as good as that Secret is unread.
   read: true
   readSecrets: true
 
@@ -193,6 +200,81 @@ auth:
   # reachable over the network - so the chart shortens them and says so.
   sessionTTL: 8h
   sessionMax: 24h
+
+  # -------------------------------------------------------------------------
+  # Single sign-on (OpenID Connect)
+  # -------------------------------------------------------------------------
+  #
+  # Empty issuer means no identity provider: the password above is the only way
+  # in, exactly as before. **Needs a console image built with single sign-on**
+  # - one that knows KT_OIDC_ISSUER; an older image ignores every value here
+  # and keeps the password.
+  #
+  # **Environment, never authorisation.** These values say who a person is. What
+  # they may do is the cluster's RBAC, and this chart maps no group to any right:
+  # a group reaches a right through a RoleBinding the cluster's owner writes.
+  #
+  # **Everybody the provider will issue a token to for this client is
+  # admitted, with the pod's full rights.** The console keeps no list of who
+  # may sign in, and until it asks the cluster what each person may do, every
+  # one of them acts as the pod's ServiceAccount - which, with the default
+  # readSecrets, reads every Secret in the cluster. Restrict who may use this
+  # client at the provider: an application assignment, a group condition on
+  # the client, or a provider that knows only the people meant to get in.
+  oidc:
+    # The provider's identity, and the exact string every token's `iss` must
+    # equal. The browser is sent to the authorization endpoint its discovery
+    # document names.
+    issuer: ""
+
+    # Where the pod fetches discovery from, when it cannot reach the issuer's
+    # own address - the provider reached by a cluster-internal Service name
+    # while browsers use its public one. The document must still name the
+    # issuer. Empty means the issuer.
+    discoveryURL: ""
+
+    clientID: ""
+
+    # The client secret, read from a Secret you create - never a value in this
+    # file, where `helm get values` would print it. Leave `existingSecret`
+    # empty for a public client; PKCE protects the exchange either way.
+    clientSecret:
+      existingSecret: ""
+      key: client-secret
+
+    # The console's callback **as the browser reaches it**, ending in
+    # /api/auth/oidc/callback, registered at the provider byte for byte. With
+    # an Ingress that is https://<host>/api/auth/oidc/callback; through a
+    # port-forward, http://127.0.0.1:<port>/api/auth/oidc/callback.
+    redirectURL: ""
+
+    # Comma separated. Some providers emit the groups claim only when asked for
+    # `groups` - Dex does.
+    scopes: "openid,email,profile"
+
+    # **Per provider**, which is why they are values: the claim that names the
+    # person (empty = email) and the claim that carries the groups
+    # (empty = groups).
+    usernameClaim: ""
+    groupsClaim: ""
+
+    # Prepended to every group before the console asserts it, like
+    # kube-apiserver's --oidc-groups-prefix. A name, never a permission.
+    groupsPrefix: ""
+
+    # How long a single sign-on session lives from the sign-in. Empty is the
+    # console's 12h. It is also how long a group removed at the provider keeps
+    # being asserted, because groups are read at sign-in.
+    sessionMax: ""
+
+  # Keep the shared password beside the identity provider. **Off, and that is
+  # the decision**: a shared password next to a provider is a way in that
+  # bypasses the provider, which nobody can attribute and nobody remembers to
+  # turn off. With it off and `oidc.issuer` set, the console registers no
+  # password route and draws no password. The cost is stated rather than found
+  # later: if the provider never comes back, the way in is a `helm upgrade`
+  # that sets this, which is a deliberate act with a record.
+  localAccount: false
 
 # ---------------------------------------------------------------------------
 # The process

@@ -40,6 +40,19 @@ jobs:
             --set rbac.metrics=true --set serverProfile=true \
             --set ingress.enabled=true --set ingress.hosts[0].host=example.test
 
+      # Single sign-on on, with every optional value set, because its whole
+      # block is behind `if .issuer` and nothing else renders it.
+      - name: Lint with single sign-on configured
+        run: |
+          helm lint ./charts/kubetower \
+            --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+            --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
+            --set auth.oidc.clientSecret.existingSecret=kubetower-oidc \
+            --set auth.oidc.discoveryURL=http://dex.dex.svc:5556/dex \
+            --set auth.oidc.groupsClaim=groups --set auth.oidc.usernameClaim=email \
+            --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
+            --set auth.localAccount=true
+
       # `helm lint` does not parse what it renders; it can pass on a template
       # that produces invalid YAML. This is the parse.
       - name: The rendered manifests are valid YAML

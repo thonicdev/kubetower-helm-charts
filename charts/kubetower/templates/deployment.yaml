@@ -110,6 +110,54 @@ spec:
               value: {{ .Values.auth.sessionTTL | quote }}
             - name: KT_SESSION_MAX
               value: {{ .Values.auth.sessionMax | quote }}
+            {{- with .Values.auth.oidc }}
+            {{- if .issuer }}
+            # Single sign-on. The variables are only set when an issuer is,
+            # so an install without one renders exactly what it did before.
+            - name: KT_OIDC_ISSUER
+              value: {{ .issuer | quote }}
+            {{- if .discoveryURL }}
+            - name: KT_OIDC_DISCOVERY_URL
+              value: {{ .discoveryURL | quote }}
+            {{- end }}
+            - name: KT_OIDC_CLIENT_ID
+              value: {{ required "auth.oidc.clientID is required when auth.oidc.issuer is set" .clientID | quote }}
+            - name: KT_OIDC_REDIRECT_URL
+              value: {{ required "auth.oidc.redirectURL is required when auth.oidc.issuer is set: the console's callback as the browser reaches it, ending in /api/auth/oidc/callback" .redirectURL | quote }}
+            {{- if .clientSecret.existingSecret }}
+            - name: KT_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .clientSecret.existingSecret | quote }}
+                  key: {{ .clientSecret.key | quote }}
+            {{- end }}
+            {{- if .scopes }}
+            - name: KT_OIDC_SCOPES
+              value: {{ .scopes | quote }}
+            {{- end }}
+            {{- if .usernameClaim }}
+            - name: KT_OIDC_USERNAME_CLAIM
+              value: {{ .usernameClaim | quote }}
+            {{- end }}
+            {{- if .groupsClaim }}
+            - name: KT_OIDC_GROUPS_CLAIM
+              value: {{ .groupsClaim | quote }}
+            {{- end }}
+            {{- if .groupsPrefix }}
+            - name: KT_OIDC_GROUPS_PREFIX
+              value: {{ .groupsPrefix | quote }}
+            {{- end }}
+            {{- if .sessionMax }}
+            - name: KT_OIDC_SESSION_MAX
+              value: {{ .sessionMax | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if and .Values.auth.oidc.issuer .Values.auth.localAccount }}
+            # The escape hatch, typed out: the shared password stays.
+            - name: KT_AUTH_LOCAL_ACCOUNT
+              value: "true"
+            {{- end }}
             - name: KT_FORWARD_PORTS
               value: {{ .Values.forwardPorts | quote }}
             {{- if .Values.readonlyClusters }}
