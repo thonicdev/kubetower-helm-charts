@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "Not a description of the values - values.yaml is that. Only what a value must never be. auth._drawnSessionSecret is where kubetower.sessionSecret remembers its key for the rest of one render; set from outside, it would skip the 32-character check and the lookup of the key already in the cluster. Helm validates this before rendering, so the chart's own write is never refused.",
+  "type": "object",
+  "properties": {
+    "auth": {
+      "type": "object",
+      "properties": {
+        "_drawnSessionSecret": false
+      }
+    }
+  }
+}
