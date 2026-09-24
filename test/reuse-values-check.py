@@ -79,6 +79,11 @@ CASES = {
     "single sign-on turned on at the upgrade": OIDC,
     "several replicas behind single sign-on": ["replicaCount=2", "persistence.enabled=false",
                                                 "serverProfile=true"] + OIDC,
+    # A later value set at the upgrade to the opposite of its default, and a
+    # `false` at that: filling what is missing must not put the default back.
+    "several replicas, one later value set against its default": [
+        "replicaCount=2", "persistence.enabled=false", "serverProfile=true",
+        "valkey.securityContext.readOnlyRootFilesystem=false"] + OIDC,
 }
 
 

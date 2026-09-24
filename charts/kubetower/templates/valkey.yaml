@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{- /*
 The store several consoles share: their sign-in sessions, the sign-ins in
 progress, and the confirmation plans between a preview and its act. Deployed

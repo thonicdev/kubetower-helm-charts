@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{/*
 The configurations this chart refuses to install, rather than install
 half-working.
