@@ -72,6 +72,10 @@ or auth.existingSecret for those tools.
 The value is drawn once per render and remembered for the rest of it, so the
 Secret and the Deployment's checksum over it describe the same key. Without
 that, the checksum would hash a second, different draw.
+
+The memo lives in the values, which every template of the render shares - and
+which a user can write to as well, skipping every check above. So
+values.schema.json refuses auth._drawnSessionSecret before rendering starts.
 */}}
 {{- define "kubetower.sessionSecret" -}}
 {{- if not (hasKey .Values.auth "_drawnSessionSecret") }}

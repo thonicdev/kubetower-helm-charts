@@ -7,7 +7,10 @@
 # by hand against a real cluster, and that is stated rather than implied.
 name: chart
 on:
+  # `edited` for the public job's scan of the title and description; the rest
+  # of the workflow reruns with it, which costs a minute and changes nothing.
   pull_request:
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
 
@@ -72,6 +75,18 @@ jobs:
           fi
           grep 'shorter than 32 characters' refused.txt
 
+      # The key is remembered for the rest of a render under
+      # auth._drawnSessionSecret, in the values. Set from outside, that key
+      # would be taken as already drawn - a five-character session key past
+      # the check above. values.schema.json refuses it before rendering.
+      - name: The session key's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set auth._drawnSessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a session key set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnSessionSecret' refused.txt
+
   rbac:
     name: the ClusterRole carries no escalation verb and no stray wildcard
     runs-on: ubuntu-latest
@@ -110,8 +125,9 @@ jobs:
       # were caught by somebody reading. A rule only a reader enforces is a
       # comment, so it is a job.
       #
-      # First the proof that it can fail: a planted file and a planted commit
-      # message in a throwaway repository must both be refused.
+      # First the proof that it can fail: a planted file, file name, commit
+      # message and description must each be refused, and a squash that only
+      # closes an issue must not be.
       - name: the check refuses what it is meant to refuse
         run: bash test/public-check.sh --self-test
       # Every tracked file, this workflow and the script included. Nothing is
@@ -120,11 +136,33 @@ jobs:
         env:
           PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
         run: bash test/public-check.sh tree
-      # And every commit message the change would bring. A squash merge can
-      # put all of them into the body of the commit that lands on `main`, so a
-      # message is as public as a file. A pull request's own description is
-      # not read here, and its `Closes` line is the one place a private issue
-      # may be named.
+      # The pull request's title and description. This repository squash-merges
+      # with the title as the subject and the description as the body, so the
+      # description is what lands on `main` - the most public text of the
+      # change, and the one a reviewer reads least carefully. A line that only
+      # closes an issue is the one place a private issue may be named.
+      #
+      # Through `env:` and never `${{ }}` inside `run:`: a description is
+      # somebody else's text, and interpolated into a script it is code.
+      # The workflow runs again on `edited`, because a description changed
+      # after a green check is otherwise never read.
+      - name: no private reference in the pull request's title or description
+        if: github.event_name == 'pull_request'
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          rc=0
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/public-check.sh message "pull request description" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::the pull request's title or description names something private, and a squash merge would put it on main. Edit it; the check runs again on the edit"
+          fi
+          exit $rc
+      # And every commit message: of the pull request, or on `main` the squash
+      # that landed - whose body is the description above, so a `Closes` line
+      # passes here for the same reason.
       - name: no private reference in a commit message
         env:
           PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
@@ -145,6 +183,6 @@ jobs:
           rc=0
           bash test/public-check.sh commits "$range" || rc=$?
           if [ $rc -eq 1 ]; then
-            echo "::error::a commit message above names something private. It cannot be taken back once pushed to a shared branch, so squash the pull request and edit the message before merging - the default squash message repeats every commit message"
+            echo "::error::a commit message above names something private. On a pull request, reword it and force-push the branch: squashing does not hide it, since the squash message here is the description rather than the commits, but the pull request keeps its commits readable. On main it is already published, and only a follow-up can say so"
           fi
           exit $rc
