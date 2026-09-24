@@ -119,6 +119,13 @@ jobs:
           pip install pyyaml
           python test/valkey-password-check.py
 
+      # `helm upgrade --reuse-values` renders these templates with the old
+      # release's values and none of this chart's newer defaults, so a value
+      # added since the first version is absent. Absent must render as the
+      # default: this renders both ways and compares, NOTES included.
+      - name: An upgrade with --reuse-values renders what a fresh install does
+        run: python test/reuse-values-check.py
+
       # The pod reads its password hash and session key once, at start, so a
       # Secret that changes under an unchanged Deployment changes nothing.
       - name: A changed credential restarts the pod
