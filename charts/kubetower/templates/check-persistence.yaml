@@ -1,3 +1,4 @@
+{{- $_ := include "kubetower.fillLaterDefaults" . -}}
 {{- /*
 Renders nothing. It refuses one combination at install time.
 
