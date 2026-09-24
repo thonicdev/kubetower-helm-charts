@@ -1,0 +1,89 @@
+# Dex, as a development fixture for KubeTower's single sign-on work.
+#
+# It proves nothing about KubeTower today: the console has no OIDC code. This
+# exists so that work is written against a real issuer, a real JWKS and a real
+# groups claim instead of a mock.
+#
+# THE ISSUER IS THE TRAP. A token's `iss` must be the same string the console
+# used for discovery, and in a cluster the browser and the server see different
+# addresses. This fixture picks the pair that agree: `localhost:5556`, reached by
+# `kubectl port-forward`, with the console running on the host (`task dev`).
+# Testing against the in-cluster console instead needs the discovery URL and the
+# issuer to be configurable separately - which is itself a requirement that work
+# has to carry.
+apiVersion: v1
+kind: Namespace
+metadata: {name: dex}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: dex, namespace: dex}
+data:
+  config.yaml: |
+    issuer: http://localhost:5556/dex
+    storage: {type: memory}
+    web: {http: 0.0.0.0:5556}
+    oauth2:
+      skipApprovalScreen: true
+      # Lets a token be minted with curl instead of a browser, which is what
+      # makes this fixture scriptable.
+      passwordConnector: local
+    # The mock connector is the one that emits a `groups` claim, which is the
+    # claim the whole mapping question turns on. `local` (the static passwords
+    # below) authenticates but carries no groups.
+    connectors:
+      - type: mockCallback
+        id: mock
+        name: Mock (carries groups)
+    staticClients:
+      - id: kubetower
+        name: KubeTower
+        secret: kubetower-dev-secret
+        redirectURIs:
+          # try.py, the throwaway client beside this file. It is first because it
+          # is the only redirect URI anything actually listens on today.
+          - http://localhost:5555/callback
+          - http://localhost:5173/auth/callback
+          - http://127.0.0.1:8824/auth/callback
+          - http://127.0.0.1:5824/auth/callback
+    enablePasswordDB: true
+    # Two people in different groups, which is the whole point: the mapping
+    # KubeTower needs is a RoleBinding to one of these group names.
+    staticPasswords:
+      # bcrypt of "password"
+      - email: alice@example.com
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: alice
+        userID: "1"
+      - email: bob@example.com
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: bob
+        userID: "2"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: dex, namespace: dex}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: dex}}
+  template:
+    metadata: {labels: {app: dex}}
+    spec:
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:v2.44.0
+          args: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports: [{name: http, containerPort: 5556}]
+          volumeMounts: [{name: config, mountPath: /etc/dex}]
+          readinessProbe:
+            httpGet: {path: /dex/healthz, port: 5556}
+      volumes:
+        - name: config
+          configMap: {name: dex}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: dex, namespace: dex}
+spec:
+  selector: {app: dex}
+  ports: [{name: http, port: 5556, targetPort: 5556}]

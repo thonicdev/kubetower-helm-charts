@@ -1,0 +1,317 @@
+# KubeTower - the console in a pod.
+#
+# ---------------------------------------------------------------------------
+# READ THIS FIRST
+#
+# By default this chart deploys the console's **server profile**:
+# `serverProfile: true` below passes `--incluster`, which removes the local
+# shell, the node shell and the assistant. Setting it false deploys the desktop
+# profile on a machine that happens to be a pod, shell included. Neither
+# setting makes it a shared multi-user console: the binary still has no per-user
+# identity and no in-cluster client of its own (`InClusterConfig` appears in no
+# non-test file). Everything that follows from that:
+#
+#   * One password, one session, one identity. There are no users.
+#   * A terminal in the console runs `kubectl` **as this pod's
+#     ServiceAccount**, not as whoever signed in. Whatever RBAC you grant
+#     below, you grant to every person who has the password.
+#   * The port-forward cap is per-process. `forwardPorts` is shared by
+#     everybody at once, not per person.
+#   * Revoking access means changing the password and restarting, which signs
+#     out everyone.
+#
+# So: install it for one operator, reachable by that operator. Do not put an
+# Ingress with no authentication in front of it and hand the URL round.
+# ---------------------------------------------------------------------------
+
+image:
+  # There is no published image. Nothing in thonicdev/kubetower pushes one:
+  # `.github/workflows/release.yml` says "Not `packages`, because nothing
+  # pushes an image", `security.yml` builds with `push: false`, and `ci.yml`
+  # tags `kubetower:ci` locally and throws it away. You build it yourself, from
+  # the repository's Dockerfile, and make it reachable from the cluster.
+  repository: kubetower
+  # Empty means the chart's appVersion, which is a placeholder. Set this.
+  tag: ""
+  # IfNotPresent so a locally built image is used where the node can already
+  # see it (Docker Desktop, kind after `kind load`, minikube after
+  # `minikube image load`). Change to Always once a registry exists.
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# One. The state directory is a ReadWriteOnce volume and the process holds the
+# forward table in memory, so a second pod is a second console with a different
+# answer, not a spare.
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# How the pod reaches the API server
+# ---------------------------------------------------------------------------
+#
+# The binary reads KUBECONFIG and nothing else - it has no in-cluster path. So
+# the chart writes a kubeconfig that points at kubernetes.default.svc and uses
+# the projected ServiceAccount token. That is the whole trick, and it is the
+# reason this chart works at all.
+kubeconfig:
+  # false lets you mount your own kubeconfig instead (see extraVolumes /
+  # extraEnv). Everything below is ignored then.
+  generate: true
+  # The name the console shows in its cluster list.
+  contextName: in-cluster
+  server: https://kubernetes.default.svc
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The token is projected by the chart with a one-hour lifetime rather than
+  # taken from the legacy auto-mounted Secret.
+  automountToken: false
+
+# ---------------------------------------------------------------------------
+# RBAC - what the pod's ServiceAccount may do
+# ---------------------------------------------------------------------------
+#
+# Read-only, cluster-wide, by default. Every rule is there because a page in
+# the console reads it; templates/rbac.yaml names which page beside each one.
+#
+# Nothing here is cluster-admin, and the three dangerous capabilities are off:
+# writing, exec, and the kubelet proxy. Turn one on only when you know that
+# everybody with the console's password gets it.
+rbac:
+  create: true
+
+  # get/list/watch on the built-in kinds the console lists. This is what makes
+  # it useful and is safe to leave on - with the caveat that it includes
+  # `secrets`, because the Config > Secrets page and the Helm release list both
+  # read them. If that is not acceptable, set readSecrets: false and accept
+  # that those two pages report a denial.
+  #
+  # **Every Secret includes this release's own**, which holds the session key
+  # and any password hash. Anybody who can sign in can read the key from the
+  # Secrets page and mint a session cookie of their own - one that survives a
+  # password change and ends only when the key is rotated. A ClusterRole
+  # cannot grant every Secret but one, so the chart does not pretend to: turn
+  # readSecrets off, or bind a narrower role of your own instead.
+  read: true
+  readSecrets: true
+
+  # Custom resources. The console discovers every CRD the cluster serves and
+  # renders it from the CRD's own printer columns, which cannot be expressed as
+  # a fixed list - the only rule that covers it is a wildcard read. It is still
+  # read-only, but it is a wildcard, so it is off by default and you turn it on
+  # deliberately.
+  customResources: false
+
+  # create/update/patch/delete on workloads and config. Off. With this on, the
+  # console's edit and delete buttons work - for everyone who can sign in.
+  #
+  # **Treat it as cluster-admin.** It grants `create` on pods, Secrets and
+  # ServiceAccounts in every namespace. A pod can run as any ServiceAccount in
+  # its namespace, so creating one borrows that account's rights - including
+  # those of the controllers in kube-system. That is not a flaw in this list;
+  # it is what "can create pods everywhere" means in Kubernetes.
+  write: false
+
+  # pods/exec and pods/portforward. Off. With this on, anybody with the
+  # password gets a root-ish shell in any pod in the cluster, holding this
+  # ServiceAccount. This is the single most expensive switch in the file.
+  exec: false
+
+  # nodes/proxy, which the kubelet-stats page uses for per-node usage where
+  # there is no metrics-server. It is a proxy to every kubelet's API. Off.
+  #
+  # Only `get` is granted, and that is still enough to reach the kubelet's
+  # own API; Kubernetes' RBAC guidance says access to nodes/proxy allows
+  # running commands in any pod on the node. Treat it as a shell on every node.
+  nodeProxy: false
+
+  # metrics.k8s.io, for the CPU and memory columns. Harmless and useful, but it
+  # only answers where metrics-server is installed.
+  metrics: true
+
+# ---------------------------------------------------------------------------
+# The front door
+# ---------------------------------------------------------------------------
+# serverProfile passes --incluster to the console.
+#
+# **It removes routes; it adds nothing.** With it set, the console registers no
+# local shell, no node shell and no assistant — the addresses do not exist rather
+# than existing and refusing, which is the difference between a property of the
+# router and a property of one code path.
+#
+# **On by default since 2026-09-22.** An in-cluster chart deploying the
+# desktop profile had it the wrong way round: the shell it kept is a shell
+# holding this pod's ServiceAccount, which reads every Secret the role allows
+# whatever the rbac switches say. Off is still available and is now the
+# decision somebody types.
+#
+# It makes the console smaller; it does not make it multi-user. A deployment
+# shared between people still shares one password and one session.
+serverProfile: true
+
+auth:
+  # The user name on the login form.
+  user: admin
+
+  # A **bcrypt hash**, never a password. Leave it empty and the binary draws a
+  # password on first start, prints it once in the log and keeps only the hash
+  # in the state directory - which means the state directory must persist, or
+  # every restart draws a new one. NOTES.txt says how to read it.
+  #
+  # Generate one with:  htpasswd -nbBC 12 "" "yourpassword" | cut -c2-
+  passwordHash: ""
+
+  # Use a Secret you made yourself instead. It must carry KT_PASSWORD_HASH,
+  # and it should carry KT_SESSION_SECRET, at least 32 characters. Without the
+  # key the pod still starts, but the console draws a new one in memory at
+  # every start - with or without persistence - so every restart, and every
+  # rollout, signs everybody out. The chart cannot look inside a Secret it did
+  # not write, so it cannot refuse the omission; NOTES repeats this instead.
+  existingSecret: ""
+
+  # The key that signs session cookies. Empty means: reuse the one already in
+  # the release's Secret if there is one, otherwise draw a new one. Rotating it
+  # signs everybody out, which is also the only way to revoke a session - the
+  # token is stateless and Logout only drops the cookie.
+  #
+  # At least 32 characters. The console ignores a shorter key and draws its
+  # own in memory, which would sign everybody out at every restart while the
+  # values claim a fixed key - so the chart refuses a shorter one.
+  #
+  # Set it (or auth.existingSecret) when a tool renders this chart without a
+  # cluster - `helm template`, Argo CD and other GitOps tools. The chart
+  # keeps a drawn key across upgrades by reading it back from the cluster, and
+  # those tools cannot, so they draw a new key on every render.
+  sessionSecret: ""
+
+  # Idle window, and the ceiling counted from login. The binary's own defaults
+  # are 30 and 90 days, which are right for a laptop and long for something
+  # reachable over the network - so the chart shortens them and says so.
+  sessionTTL: 8h
+  sessionMax: 24h
+
+# ---------------------------------------------------------------------------
+# The process
+# ---------------------------------------------------------------------------
+
+# The port-forward range the console may bind inside the pod. These are local
+# to the pod: a forward opened here is reachable through the console, not from
+# the cluster. The cap is per process, so this range is shared by everybody
+# signed in - which is one of the single-user assumptions.
+forwardPorts: "30000-30031"
+
+# Clusters to mark read-only, comma-separated context names. With the generated
+# kubeconfig there is exactly one context, so this is either empty or that
+# name. It is a guardrail against a misclick, not a boundary - the marking does
+# not stop a port-forward and does not stop the terminal.
+readonlyClusters: ""
+
+# KT_DIAG - extra startup logging. "1" makes the first 30 lines of the log the
+# whole diagnosis, which is worth it on a first install.
+diagnostics: ""
+
+# Claude Code ships in the image and the console offers a control for it. In a
+# pod reachable by more than one person this runs on one subscription, as one
+# identity, with the pod's own credentials. Read-only by default.
+claude:
+  readOnly: true
+  permissionMode: ""
+
+extraEnv: []
+# - name: KT_EXTRAS
+#   value: ""
+
+# ---------------------------------------------------------------------------
+# Storage - the state directory, KT_STATE_DIR=/var/lib/kubetower
+# ---------------------------------------------------------------------------
+#
+# What lives there: the rail's hotbars, the version note, and - when
+# auth.passwordHash is empty - the drawn password's bcrypt hash and its
+# session key. With persistence off, a restart draws a new password and signs
+# everybody out.
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  existingClaim: ""
+
+service:
+  type: ClusterIP
+  port: 5823
+  annotations: {}
+
+# Off. Deliberately, and this is not a formality: an Ingress in front of this
+# publishes a console holding cluster credentials behind one shared password,
+# on whatever the ingress controller answers on. If you turn it on, put TLS and
+# something that authenticates in front of it.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: kubetower.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    # No CPU limit: the console's list refreshes are bursty and a limit turns
+    # that into throttled latency on every page. Memory is capped because a
+    # runaway is worth killing.
+    memory: 1Gi
+
+# uid 100 / gid 101 are what the image creates and what /var/lib/kubetower is
+# chowned to. Changing them without changing the image breaks every write.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  # false, and honestly: the process writes to $HOME (the Claude config
+  # directory and the AWS CLI cache) and to /tmp/kubetower. Setting it true
+  # needs an emptyDir on each of those, which this chart does not yet do.
+  readOnlyRootFilesystem: false
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+# /readyz degrades when the kubeconfig stops reading or no context answers, so
+# it is a real readiness signal rather than "the process is up".
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraVolumes: []
+extraVolumeMounts: []

@@ -1,0 +1,202 @@
+{{- if .Values.rbac.create }}
+{{/*
+The console's permissions.
+
+Derived from what the code reads, not from a convenience role:
+
+  internal/resources/kinds.go   the list pages - one entry per kind below
+  internal/helm/helm.go:102     Helm releases are Secrets, type=helm.sh/release.v1
+  internal/metrics/metrics.go   metrics.k8s.io, and Prometheus by port-forward
+  internal/kubeletstats         nodes/proxy
+  internal/terminal/exec.go     pods/exec
+  internal/terminal/portforward pods/portforward
+  internal/customresources      every CRD the cluster serves, dynamically
+
+Not the built-in `view` ClusterRole: it excludes Secrets, which the Secrets
+page and the Helm list both need, and it carries rules for things this console
+never asks about. An explicit list is longer and says what it is for.
+
+Not cluster-admin. Ever. Whatever is granted here is granted to every person
+who knows the console's password, because the console acts as this
+ServiceAccount and not as the person signed in.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+rules:
+{{- if .Values.rbac.read }}
+  # Core workloads and the objects the drawer relates them to.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log          # the log panel
+      - pods/status
+      - services
+      - endpoints
+      - namespaces        # the namespace selector, and it is cluster-scoped
+      - nodes             # the nodes page and the overview's capacity
+      - events            # the drawer's event list
+      - persistentvolumeclaims
+      - persistentvolumes
+      - replicationcontrollers
+      - serviceaccounts
+      - resourcequotas
+      - limitranges
+      - podtemplates
+      - configmaps
+    verbs: ["get", "list", "watch"]
+{{- if .Values.rbac.readSecrets }}
+  # Secrets, and this is the rule to think about before the others.
+  #
+  # Two things need it: the Config > Secrets list, and the Helm release list,
+  # which is `get secrets --field-selector type=helm.sh/release.v1` and has no
+  # other implementation - internal/helm/helm.go:163 says a caller without
+  # `list` on secrets is told there are no releases, which is the wrong answer
+  # rather than a refusal.
+  #
+  # It is cluster-wide read of every Secret in the cluster. Set
+  # rbac.readSecrets=false to drop it; those two pages then report a denial,
+  # which is at least an honest one.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/status
+      - statefulsets
+      - statefulsets/status
+      - daemonsets
+      - daemonsets/status
+      - replicasets       # internal/changes reads these for rollout history
+      - controllerrevisions
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch"]
+  # The Access Control pages. Reading RBAC is reading who can do what; it is
+  # not itself a grant, and a console that cannot show it cannot answer the
+  # question people open it for.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csidrivers", "csinodes", "csistoragecapacities"]
+    verbs: ["get", "list", "watch"]
+  # The CRD list itself, which is how the console knows what custom resources
+  # exist and which printer columns to render. Reading the definitions does not
+  # grant reading the objects - that is rbac.customResources below.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
+{{- if .Values.rbac.metrics }}
+  # The live CPU and memory columns. Answers only where metrics-server is
+  # installed; where it is not, the console says "no metrics backend" and that
+  # is a different fact from being refused.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+{{- end }}
+{{- if .Values.rbac.customResources }}
+  # Every custom resource in the cluster, read-only.
+  #
+  # A wildcard, because it has to be: the console renders whatever CRDs the
+  # cluster serves, discovered at runtime, and a fixed list cannot name a kind
+  # installed tomorrow. It is get/list/watch and nothing else - but it is still
+  # "read every object of every kind", which includes any CRD that stores a
+  # credential in its spec. Off by default for that reason.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
+{{- if .Values.rbac.write }}
+  # Editing. The drawer's manifest editor, the scale control, delete, and the
+  # bulk actions in internal/actions.
+  #
+  # Granted to the pod, therefore to everybody with the password. There is no
+  # per-person audit trail: every change in the API server's audit log is
+  # attributed to this ServiceAccount.
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "serviceaccounts"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "statefulsets", "statefulsets/scale", "daemonsets", "replicasets"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create", "update", "patch", "delete"]
+{{- end }}
+{{- if .Values.rbac.exec }}
+  # A shell in any pod, and a socket to any pod's port.
+  #
+  # This is the switch that turns a viewer into a way into the cluster. The
+  # console's terminal runs as this ServiceAccount; internal/forward's own
+  # comment says a port-forward "creates nothing" in RBAC's spelling and that
+  # what travels through the tunnel may be anything at all. Both are true of
+  # everybody who can sign in.
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/attach", "pods/portforward"]
+    verbs: ["create", "get"]
+{{- end }}
+{{- if .Values.rbac.nodeProxy }}
+  # The kubelet's own stats API, through the API server's node proxy
+  # (internal/kubeletstats). It is a proxy to every kubelet on every node - a
+  # far wider capability than the page that uses it needs to imply.
+  - apiGroups: [""]
+    resources: ["nodes/proxy", "nodes/stats", "nodes/metrics"]
+    verbs: ["get"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubetower.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubetower.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

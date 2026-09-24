@@ -1,0 +1,33 @@
+apiVersion: v2
+name: kubetower
+description: >-
+  The KubeTower console, in a pod. By default it runs the console's server
+  profile, which has no local shell, node shell or assistant; the desktop
+  profile is one value away. Either way it is one process, one password and
+  one identity for everybody who signs in - not a multi-user console.
+type: application
+
+# The chart's own version. It is not the console's.
+version: 0.1.0
+
+# What this chart was written against. `kubetower` carries no git tag, so a
+# binary built from the tree reports `dev` - there is no released version to
+# name here and pretending otherwise would put a number in a report.
+appVersion: "0.0.0-dev"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/thonicdev/kubetower
+sources:
+  - https://github.com/thonicdev/kubetower
+
+keywords:
+  - kubernetes
+  - console
+  - kubetower
+
+annotations:
+  # Read this before installing anywhere that more than one person can reach.
+  # The profile the defaults deploy; serverProfile=false deploys "desktop".
+  thonicdev.com/profile: "server"
+  thonicdev.com/shared-safe: "false"

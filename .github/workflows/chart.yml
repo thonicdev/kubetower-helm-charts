@@ -1,0 +1,164 @@
+# What a red cross here means: the chart would install something different from
+# what it says it installs.
+#
+# It does not install anything. Nothing in this workflow reaches a cluster, so
+# nothing here proves the chart works - only that it renders, and that what it
+# renders does not grant more than the README claims. The install path is tested
+# by hand against a real cluster, and that is stated rather than implied.
+name: chart
+on:
+  # `edited` for the public job's scan of the title and description; the rest
+  # of the workflow reruns with it, which costs a minute and changes nothing.
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint and template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      # The defaults are what most people install, so they are linted first and
+      # on their own - a failure here is a failure for everybody.
+      - name: Lint the defaults
+        run: helm lint ./charts/kubetower
+
+      # And every dangerous toggle on, because a template that only renders in
+      # its default shape has whole branches nothing has ever parsed.
+      - name: Lint with every toggle on
+        run: |
+          helm lint ./charts/kubetower \
+            --set rbac.write=true --set rbac.exec=true --set rbac.nodeProxy=true \
+            --set rbac.customResources=true --set rbac.readSecrets=true \
+            --set rbac.metrics=true --set serverProfile=true \
+            --set ingress.enabled=true --set ingress.hosts[0].host=example.test
+
+      # `helm lint` does not parse what it renders; it can pass on a template
+      # that produces invalid YAML. This is the parse.
+      - name: The rendered manifests are valid YAML
+        run: |
+          helm template kubetower ./charts/kubetower --set serverProfile=true \
+            | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
+
+      # The pod reads its password hash and session key once, at start, so a
+      # Secret that changes under an unchanged Deployment changes nothing.
+      - name: A changed credential restarts the pod
+        run: python test/checksum-check.py
+
+      # The console ignores a session key under 32 characters and draws its
+      # own, so a short auth.sessionSecret would look fixed and be random.
+      - name: A session key the console would ignore is refused
+        run: |
+          if helm template kubetower ./charts/kubetower --set auth.sessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a five-character session key was accepted"
+            exit 1
+          fi
+          grep 'shorter than 32 characters' refused.txt
+
+      # The key is remembered for the rest of a render under
+      # auth._drawnSessionSecret, in the values. Set from outside, that key
+      # would be taken as already drawn - a five-character session key past
+      # the check above. values.schema.json refuses it before rendering.
+      - name: The session key's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set auth._drawnSessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a session key set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnSessionSecret' refused.txt
+
+  rbac:
+    name: the ClusterRole carries no escalation verb and no stray wildcard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: pip install pyyaml
+      # --self-test first: it refuses a deliberately bad role and fails the job
+      # if it does not. A checker nobody has seen fail is a checker nobody knows
+      # is connected.
+      - run: python test/rbac-check.py --self-test
+
+  public:
+    name: nothing here cites what a stranger cannot open
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history, because the commit messages are scanned too.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # This repository is public. Its instructions say to link the console
+      # freely and anything private never, and that was broken twice in its first
+      # two days - once by a copied template naming private repositories, once by
+      # comments citing a decision by its identifier in a private register. Both
+      # were caught by somebody reading. A rule only a reader enforces is a
+      # comment, so it is a job.
+      #
+      # First the proof that it can fail: a planted file, file name, commit
+      # message and description must each be refused, and a squash that only
+      # closes an issue must not be.
+      - name: the check refuses what it is meant to refuse
+        run: bash test/public-check.sh --self-test
+      # Every tracked file, this workflow and the script included. Nothing is
+      # excluded: the script spells none of the names it refuses.
+      - name: no private reference in the tree
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+        run: bash test/public-check.sh tree
+      # The pull request's title and description. This repository squash-merges
+      # with the title as the subject and the description as the body, so the
+      # description is what lands on `main` - the most public text of the
+      # change, and the one a reviewer reads least carefully. A line that only
+      # closes an issue is the one place a private issue may be named.
+      #
+      # Through `env:` and never `${{ }}` inside `run:`: a description is
+      # somebody else's text, and interpolated into a script it is code.
+      # The workflow runs again on `edited`, because a description changed
+      # after a green check is otherwise never read.
+      - name: no private reference in the pull request's title or description
+        if: github.event_name == 'pull_request'
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          rc=0
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/public-check.sh message "pull request description" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::the pull request's title or description names something private, and a squash merge would put it on main. Edit it; the check runs again on the edit"
+          fi
+          exit $rc
+      # And every commit message: of the pull request, or on `main` the squash
+      # that landed - whose body is the description above, so a `Closes` line
+      # passes here for the same reason.
+      - name: no private reference in a commit message
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ vars.PUBLIC_CHECK_EXTRA }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            range="origin/$BASE..HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            range="$BEFORE..HEAD"
+          else
+            echo "no earlier commit to compare against on this push - nothing to scan"
+            exit 0
+          fi
+          # The step's shell stops at the first failure, so the status is
+          # caught rather than read afterwards.
+          rc=0
+          bash test/public-check.sh commits "$range" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::a commit message above names something private. On a pull request, reword it and force-push the branch: squashing does not hide it, since the squash message here is the description rather than the commits, but the pull request keeps its commits readable. On main it is already published, and only a follow-up can say so"
+          fi
+          exit $rc

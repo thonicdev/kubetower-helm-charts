@@ -1,0 +1,227 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Recreate, not RollingUpdate. The state directory is ReadWriteOnce, so a
+  # second pod cannot mount it while the first holds it - a rolling update
+  # would wedge with the new pod Pending on the volume. One console is also
+  # what the process assumes: the forward table lives in its memory.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "kubetower.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart the pod when the kubeconfig or the credentials change. The
+        # process reads both once, at start, so a changed Secret with an
+        # unchanged Deployment would leave the old password and the old
+        # session key running - and rotating the key would revoke nothing.
+        {{- if .Values.kubeconfig.generate }}
+        checksum/kubeconfig: {{ include (print $.Template.BasePath "/configmap-kubeconfig.yaml") . | sha256sum }}
+        {{- end }}
+        # Over the Secret this chart writes. A Secret named by
+        # auth.existingSecret is not the chart's to read, so its name is
+        # hashed instead: changing its contents needs a
+        # `kubectl rollout restart` of this Deployment.
+        {{- if .Values.auth.existingSecret }}
+        checksum/secret: {{ .Values.auth.existingSecret | sha256sum }}
+        {{- else }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kubetower.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "kubetower.serviceAccountName" . }}
+      # The token comes from the projected volume below, with an hour on it,
+      # rather than from the legacy Secret that never expires.
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kubetower
+          image: {{ include "kubetower.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # --unattended because the first start in an empty state directory
+          # otherwise wants to show the drawn password in a dialog. There is no
+          # dialog here; the password goes to the log instead, which is where
+          # NOTES.txt sends you. ci.yml runs the image the same way.
+          args:
+            - --unattended
+            {{- if .Values.serverProfile }}
+            # The server profile. It does not configure the console, it
+            # makes it smaller: the local shell, the node shell and the
+            # assistant are not registered at all, so each address answers
+            # exactly what a path that never existed answers - 404 under /api/,
+            # the single-page shell under /kt-api/ - rather than a handler that
+            # refuses. Not one status: /kt-api/ is not under the API mount.
+            #
+            # **On by default.** Set false, this chart deploys the single-user
+            # console in a pod, and the console offers a shell holding this
+            # pod's ServiceAccount.
+            - --incluster
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 5823
+              protocol: TCP
+          env:
+            # The image already sets KT_LISTEN=:5823 and
+            # KT_STATE_DIR=/var/lib/kubetower. Both are repeated here on
+            # purpose: an operator reading this Deployment should see where the
+            # process listens and where it writes without opening the
+            # Dockerfile.
+            - name: KT_LISTEN
+              value: ":5823"
+            - name: KT_STATE_DIR
+              value: /var/lib/kubetower
+            {{- if .Values.kubeconfig.generate }}
+            - name: KUBECONFIG
+              value: /etc/kubetower/kubeconfig/config
+            {{- else }}
+            # kubeconfig.generate is false, so KUBECONFIG is not set here: it
+            # is yours to set through extraEnv, beside the extraVolumes that
+            # mount the file it names. Setting it from here would point the
+            # process at a path nothing mounts, and the console would start,
+            # answer /healthz, and report no clusters - which reads as a
+            # cluster problem rather than a missing mount.
+            {{- end }}
+            - name: KT_IN_CONTAINER
+              value: "1"
+            - name: KT_USER
+              value: {{ .Values.auth.user | quote }}
+            - name: KT_SESSION_TTL
+              value: {{ .Values.auth.sessionTTL | quote }}
+            - name: KT_SESSION_MAX
+              value: {{ .Values.auth.sessionMax | quote }}
+            - name: KT_FORWARD_PORTS
+              value: {{ .Values.forwardPorts | quote }}
+            {{- if .Values.readonlyClusters }}
+            - name: KT_READONLY_CLUSTERS
+              value: {{ .Values.readonlyClusters | quote }}
+            {{- end }}
+            {{- if .Values.diagnostics }}
+            - name: KT_DIAG
+              value: {{ .Values.diagnostics | quote }}
+            {{- end }}
+            - name: CLAUDE_CONFIG_DIR
+              value: /home/kubetower/.claude
+            - name: KT_CLAUDE_READONLY
+              value: {{ .Values.claude.readOnly | quote }}
+            {{- if .Values.claude.permissionMode }}
+            - name: KT_CLAUDE_PERMISSION_MODE
+              value: {{ .Values.claude.permissionMode | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            # KT_PASSWORD_HASH (when there is one) and KT_SESSION_SECRET.
+            # envFrom rather than two secretKeyRefs, so that an absent
+            # KT_PASSWORD_HASH is simply an absent variable instead of a pod
+            # that will not start.
+            - secretRef:
+                name: {{ include "kubetower.secretName" . }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/kubetower
+            {{- if .Values.kubeconfig.generate }}
+            - name: kubeconfig
+              mountPath: /etc/kubetower/kubeconfig
+              readOnly: true
+            {{- end }}
+            - name: serviceaccount-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            # $HOME is written to: the Claude config directory and the AWS
+            # CLI's cache both live there, and the image creates them owned by
+            # uid 100. An emptyDir keeps that true without needing the whole
+            # root filesystem writable for it.
+            - name: home
+              mountPath: /home/kubetower/.claude
+              subPath: claude
+            - name: tmp
+              mountPath: /tmp/kubetower
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-state" (include "kubetower.fullname" .)) }}
+          {{- else }}
+          # No PVC: the hotbars and - when auth.passwordHash is empty - the
+          # drawn password go with the pod. Stated rather than hidden, because
+          # "the password changed on its own" is the symptom.
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.kubeconfig.generate }}
+        - name: kubeconfig
+          configMap:
+            name: {{ include "kubetower.fullname" . }}-kubeconfig
+            items:
+              - key: config
+                path: config
+        {{- end }}
+        - name: serviceaccount-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+                  # No audience: the default one is the API server, which is
+                  # the only thing this token is presented to.
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

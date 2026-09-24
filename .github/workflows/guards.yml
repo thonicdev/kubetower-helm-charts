@@ -1,0 +1,81 @@
+# Two gates over every pull request: no machine attribution in the history or
+# the description, and Conventional Commits on the messages and on the title.
+#
+# The attribution job exists because this project is dual-licensed, which is
+# lawful only while the copyright holder is the sole author - so the git history
+# is the record that argument is made from, and a machine co-author trailer
+# inserts a non-signatory party into exactly that record.
+name: guards
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  attribution:
+    name: no machine co-author in the history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # First the proof that it can fail: planted attribution in a description
+      # and in a commit must both be refused.
+      - name: The check refuses what it is meant to refuse
+        run: bash test/attribution-check.sh --self-test
+      - name: Refuse machine attribution in the commit range
+        env:
+          BASE: ${{ github.base_ref }}
+        run: bash test/attribution-check.sh commits "origin/$BASE..HEAD"
+      # The squash message here is the title and the description, so the
+      # description is what reaches `main` - and it is where a tool writes its
+      # "generated with" line. Through `env:`, never `${{ }}` inside `run:`:
+      # the description is somebody else's text. `edited` above reruns this
+      # when it changes.
+      - name: Refuse machine attribution in the title or description
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/attribution-check.sh message "pull request description"
+      - name: Report every author and committer in the range
+        run: git log --format='%an <%ae>%n%cn <%ce>' "origin/${{ github.base_ref }}..HEAD" | sort -u
+
+  commits:
+    name: commit messages follow Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      - name: Lint the commit range
+        run: npx commitlint --from "origin/${{ github.base_ref }}" --to HEAD --verbose
+
+  pr-title:
+    name: the pull-request title follows Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      # Without this the config file is absent and commitlint fails on every
+      # title, valid ones included - "Please add rules to your
+      # commitlint.config.js". A job that cannot pass is not a check.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      # A squash merge takes the PR title as the commit subject, so a repository
+      # that lints only commits has an unenforced convention that looks enforced.
+      # Runs on `edited` too: a title changed after a green check is otherwise
+      # never re-checked.
+      - name: Lint the pull-request title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s' "$TITLE" | npx commitlint --verbose
