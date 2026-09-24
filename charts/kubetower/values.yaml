@@ -45,10 +45,10 @@ image:
   pullSecrets: []
 
 # One by default. Above one, the chart also deploys a small Valkey (see
-# `valkey` at the end of this file) that the consoles share their sign-in
-# sessions, sign-ins in progress and confirmation plans through - so a sign-in
-# started through one pod finishes through another, and a session opened on one
-# is valid on the next.
+# `valkey` at the end of this file) through which the consoles share their
+# sessions, confirmation plans and a short-lived marker per completed sign-in -
+# so a session opened on one pod is valid on the next. A sign-in in progress
+# travels in a sealed cookie in the browser, so it finishes through any pod.
 #
 # **What several replicas cost**, because it is not only more pods: each
 # console's state directory is its own, so the console does not offer what only
@@ -464,9 +464,10 @@ valkey:
   service:
     port: 6379
 
-  # Valkey's own ceiling, below the container's memory limit. At the ceiling
-  # the key nearest its expiry goes first: a sign-in in progress or a plan,
-  # long before a session.
+  # Valkey's own ceiling, below the container's memory limit, so that its
+  # memory stays bounded. At the ceiling the key nearest its expiry goes first:
+  # under pressure the short-lived sign-in markers and plans go long before a
+  # session.
   maxmemory: 48mb
 
   resources:

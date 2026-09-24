@@ -22,10 +22,9 @@ data:
     save ""
     appendonly no
     dir /data
-    # A bound, and what goes first when it is reached. The sign-in route is
-    # public, so anybody can fill this with sign-ins in progress; volatile-ttl
-    # evicts the key nearest its expiry, which is a ten-minute sign-in or a
-    # two-minute plan long before it is a session.
+    # A bound on memory, and what goes first when it is reached: volatile-ttl
+    # evicts the key nearest its expiry, so under pressure the short-lived
+    # sign-in markers and plans go long before a session.
     maxmemory {{ .Values.valkey.maxmemory }}
     maxmemory-policy volatile-ttl
 {{- end }}

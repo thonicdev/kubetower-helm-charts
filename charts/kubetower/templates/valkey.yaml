@@ -1,19 +1,20 @@
 {{- /*
-The store several consoles share: their sign-in sessions, the sign-ins in
-progress, and the confirmation plans between a preview and its act. Deployed
-only when replicaCount is above one; one console keeps all three in its own
-memory, as it always has.
+The store several consoles share: their sessions, the confirmation plans
+between a preview and its act, and a short-lived marker per completed sign-in
+so that a sign-in code cannot be used twice. Deployed only when replicaCount
+is above one; one console keeps all three in its own memory, as it always has.
 
 Written here rather than taken from a subchart: the common one's images are no
 longer freely pullable, and what is needed is one small process with a
 password - which is less than a subchart's values file.
 
 **Nothing is written to disk.** No RDB, no AOF. Every record in it has an
-expiry of minutes or hours, and every one is sealed by the consoles with a key
-Valkey never sees, so a copy on a volume would be a copy of nothing useful
-that outlives the thing it describes. The price is stated rather than hidden:
-a restart of this pod signs everybody out, as a restart of a single console
-does - one click each, while the identity provider's own session is alive.
+expiry of minutes or hours, and none can be read without a key Valkey never
+sees - sessions and plans are sealed by the consoles, a marker is a hash - so a
+copy on a volume would be a copy of nothing useful that outlives the thing it
+describes. The price is stated rather than hidden: a restart of this pod signs
+everybody out, as a restart of a single console does - one click each, while
+the identity provider's own session is alive.
 */ -}}
 {{- if include "kubetower.several" . }}
 apiVersion: v1

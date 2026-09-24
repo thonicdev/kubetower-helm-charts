@@ -92,8 +92,8 @@ at once are one user as far as the cluster is concerned.
 
 {{- if include "kubetower.several" . }}
 
-   SEVERAL REPLICAS ({{ .Values.replicaCount }}): the consoles share their sign-in sessions,
-   sign-ins in progress and confirmation plans through Valkey
+   SEVERAL REPLICAS ({{ .Values.replicaCount }}): the consoles share their sessions,
+   confirmation plans and a short-lived marker per completed sign-in through Valkey
    ({{ include "kubetower.valkeyName" . }}). What only one pod could hold is not offered:
    the rail, column and density preferences cannot be changed, the settings
    are read-only, port-forwards are off, and there is no archive. A restart of

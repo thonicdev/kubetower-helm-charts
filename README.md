@@ -47,15 +47,17 @@ any other way is untested and the list above is why.
 ## Several replicas
 
 `replicaCount` above one also deploys a small Valkey - a StatefulSet of one,
-from the official `valkey/valkey` image, pinned by digest - that the consoles
-share their sign-in sessions, the sign-ins in progress (`state`, the PKCE
-verifier, the nonce) and their confirmation plans through. A sign-in started
-through one pod finishes through another, a session opened on one is valid on
-the next, and a sign-out through either ends it on both. Every value is sealed
-by the console with its session key before it is written, so the Valkey
-password alone reads nothing and forges nothing. Nothing is written to disk: a
-restart of the Valkey pod signs everybody out, which is what a restart of a
-single console costs too.
+from the official `valkey/valkey` image, pinned by digest - through which the
+consoles share their sessions, their confirmation plans and a short-lived
+marker per completed sign-in, so that a sign-in code cannot be used twice. A
+sign-in in progress is not stored there: it travels in a sealed cookie in the
+browser, so a sign-in started through one pod finishes through another. A
+session opened on one pod is valid on the next, and a sign-out through either
+ends it on both. Sessions and plans are sealed by the console with its session
+key before they are written, and a marker is only a hash of the sign-in it
+closes, so the Valkey password alone reads no session and forges none.
+Nothing is written to disk: a restart of the Valkey pod signs everybody out,
+which is what a restart of a single console costs too.
 
 **What several replicas do not offer**, because each console's state directory
 is its own: the rail, column and density preferences cannot be changed (every
