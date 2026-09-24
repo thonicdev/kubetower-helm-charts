@@ -1,0 +1,23 @@
+{{- /*
+Renders nothing. It refuses one combination at install time.
+
+Without persistence the state directory is an emptyDir, and a password the
+console draws for itself - no auth.passwordHash, no auth.existingSecret - is
+kept only there. Every restart would draw a new one and print it once, and the
+password somebody wrote down would stop working with nothing saying why.
+
+Refused here rather than explained by the console, because this is the one
+moment somebody is reading: at install, before anything runs, with the fix one
+value away. A sentence in a pod's log after the fact is found by the person
+whose password has already changed.
+
+A way in that keeps nothing on the disk is fine without persistence: a hash
+you supplied, a Secret you made, or single sign-on with the shared password
+off - which draws no password at all.
+*/ -}}
+{{- $auth := .Values.auth -}}
+{{- $passwordRoute := or (not $auth.oidc.issuer) $auth.localAccount -}}
+{{- $drawn := and $passwordRoute (not $auth.passwordHash) (not $auth.existingSecret) -}}
+{{- if and (not .Values.persistence.enabled) $drawn -}}
+{{- fail "persistence.enabled=false with no password configured: the console would draw a new password on every restart and the old one would stop working. Set auth.passwordHash (or auth.existingSecret), or configure auth.oidc.issuer with auth.localAccount=false, or leave persistence on." -}}
+{{- end -}}

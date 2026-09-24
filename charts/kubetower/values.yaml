@@ -311,10 +311,29 @@ extraEnv: []
 # Storage - the state directory, KT_STATE_DIR=/var/lib/kubetower
 # ---------------------------------------------------------------------------
 #
-# What lives there: the rail's hotbars, the version note, and - when
-# auth.passwordHash is empty - the drawn password's bcrypt hash and its
-# session key. With persistence off, a restart draws a new password and signs
-# everybody out.
+# What lives there: the rail's hotbars, the column layouts, the cluster names,
+# the event archive and its settings, the node-shell image, the version note,
+# and - when auth.passwordHash is empty - the drawn password's bcrypt hash.
+#
+# **The console is told which way this is set** (KT_STATE_PERSISTENT), because
+# it cannot see a volume. With persistence off it offers nothing that would not
+# survive a restart: no archive, no archive settings and no node-shell image
+# setting, absent from the Settings page and from its API. The rail and the
+# columns still work, for as long as the pod runs.
+#
+# **Off with a drawn password is refused at install**, because every restart
+# would draw a new one and the old would stop working with nothing saying why.
+# Turning persistence off therefore needs one of: auth.passwordHash,
+# auth.existingSecret, or auth.oidc.issuer with auth.localAccount false - the
+# three ways in that keep nothing on this disk.
+#
+# **With auth.existingSecret, that Secret must also carry KT_SESSION_SECRET.**
+# The chart's own Secret always has one; yours has one only if you put it
+# there. Without it the console draws a new key at every start, so every
+# restart signs everybody out - and that is so with persistence on as well,
+# because an environment-supplied password never reads a key from this disk.
+# The chart cannot look inside a Secret it did not write, so this is said
+# rather than refused; NOTES says it again on every install that names one.
 persistence:
   enabled: true
   storageClass: ""
