@@ -70,6 +70,13 @@ helm install kubetower ./charts/kubetower \
 Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
 prints all three commands with your values filled in.
 
+## Upgrading
+
+Upgrade with `helm upgrade --reset-then-reuse-values` (Helm 3.14 or later), or
+pass your values file again with `-f`. Plain `--reuse-values` keeps only the
+values the previous release stored, so any key a newer chart adds is missing
+and the render fails.
+
 ## What it deploys
 
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
