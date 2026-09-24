@@ -139,8 +139,8 @@ prints all three commands with your values filled in.
 
 Upgrade with `helm upgrade --reset-then-reuse-values` (Helm 3.14 or later), or
 pass your values file again with `-f`. Plain `--reuse-values` keeps only the
-values the previous release stored, so any key a newer chart adds is missing
-and the render fails.
+values the previous release stored, so any key a newer chart adds is missing,
+and the render comes out wrong or fails.
 
 ## What it deploys
 
