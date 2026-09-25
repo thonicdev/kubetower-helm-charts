@@ -11,6 +11,7 @@ Derived from what the code reads, not from a convenience role:
   internal/terminal/exec.go     pods/exec
   internal/terminal/portforward pods/portforward
   internal/customresources      every CRD the cluster serves, dynamically
+  internal/access               subjectaccessreviews, asked before every write
 
 Not the built-in `view` ClusterRole: it excludes Secrets, which the Secrets
 page and the Helm list both need, and it carries rules for things this console
@@ -27,6 +28,24 @@ metadata:
   labels:
     {{- include "kubetower.labels" . | nindent 4 }}
 rules:
+  # Asking the cluster whether a person may do a thing, before the console does
+  # it (internal/access). A person signed in through single sign-on is asked
+  # about by name and groups, in a SubjectAccessReview; without this rule that
+  # review cannot be made, and every write of theirs is refused as unanswerable.
+  #
+  # Always granted, whatever the switches below say: it lets the console check
+  # each person's rights before acting, rather than acting with its own. It is
+  # a question and not a grant - the answer is the cluster's own RBAC, and a
+  # review changes nothing. What it does reveal is what any user or group may
+  # do, which is what `kubectl auth can-i --as` tells an administrator and what
+  # the Access Control pages already show from the bindings.
+  #
+  # The shared password account and the desktop ask about the console itself,
+  # in a SelfSubjectAccessReview, which needs no rule here: the built-in
+  # system:basic-user role grants it to every authenticated identity.
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
 {{- if .Values.rbac.read }}
   # Core workloads and the objects the drawer relates them to.
   - apiGroups: [""]

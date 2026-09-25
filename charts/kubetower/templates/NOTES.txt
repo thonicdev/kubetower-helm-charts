@@ -82,6 +82,7 @@ at once are one user as far as the cluster is concerned.
 3. WHAT WORKS AND WHAT DOES NOT, WITH THESE VALUES
 
    Who can sign in ........... {{ if .Values.auth.oidc.issuer }}anybody the provider issues a token to for this client{{ if .Values.auth.localAccount }}, and anybody with the password{{ end }} - restrict it at the provider{{ else }}anybody with the password{{ end }}
+   Asking who may do what .... {{ if .Values.rbac.create }}yes, always - so the console can check each person's rights with the cluster before acting{{ else }}NOT GRANTED HERE - rbac.create is false: bind create on subjectaccessreviews yourself, or every single sign-on write is refused{{ end }}
    Reading resources ......... {{ if .Values.rbac.read }}yes{{ else }}NO - rbac.read is false, the lists will be empty{{ end }}
    Secrets and Helm releases . {{ if and .Values.rbac.read .Values.rbac.readSecrets }}yes - every Secret, this release's own session key included{{ else }}NO - those two pages will report a denial{{ end }}
    Custom resources .......... {{ if .Values.rbac.customResources }}yes (wildcard read is granted){{ else }}NO - rbac.customResources is false{{ end }}
