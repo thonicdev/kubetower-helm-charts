@@ -96,6 +96,10 @@ serviceAccount:
 # Read-only, cluster-wide, by default. Every rule is there because a page in
 # the console reads it; templates/rbac.yaml names which page beside each one.
 #
+# One rule is always there, whatever the switches say: `create` on
+# subjectaccessreviews, so the console can check each person's rights before
+# acting, rather than acting with its own. It asks; it grants nothing.
+#
 # Nothing here is cluster-admin, and the three dangerous capabilities are off:
 # writing, exec, and the kubelet proxy. Turn one on only when you know that
 # everybody with the console's password gets it.

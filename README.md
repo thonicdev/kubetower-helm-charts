@@ -187,6 +187,11 @@ Read-only, cluster-wide, by default — derived from what the code reads, not fr
 `cluster-admin` and not from the built-in `view` role, which excludes Secrets,
 which the Secrets page and the Helm release list both need.
 
+One rule is not read-only and is always there: `create` on
+`subjectaccessreviews`, which lets the console check each person's rights
+before acting, rather than acting with its own. It asks the cluster a question
+and grants nothing.
+
 Three switches are off and each one is a decision rather than a default:
 `rbac.write`, `rbac.exec`, `rbac.nodeProxy`. `rbac.customResources` is off too —
 the custom-resource browser needs a wildcard read, and a wildcard is worth typing
