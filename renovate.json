@@ -1,3 +1,69 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Renovate runs self-hosted, once a night, with the operator's token: every branch it pushes is authored by the operator, which is what the attribution check asks of this repository. Do not set a bot gitAuthor here.",
+    "Every update this chart takes is something a person installs, so the shape below is chosen for review rather than volume: a handful of grouped pull requests on Monday morning, majors held, rebased only when they conflict.",
+    "Scopes are the chart's own scope-enum: `ci` for the workflows, `oidc` for the Dex fixture under test/, `deps` for the images the chart pins. A scope outside that list is a red pull request.",
+    "A release is proposed once it is three days old: long enough for a compromised or yanked publish to be noticed upstream."
+  ],
+  "extends": ["config:recommended"],
+  "ignorePaths": ["**/node_modules/**"],
+  "timezone": "Europe/Paris",
+  "schedule": ["before 6am on monday"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 0,
+  "rebaseWhen": "conflicted",
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "description": "A security fix is not held until Monday, and it is a fix, not a chore.",
+    "schedule": ["at any time"],
+    "minimumReleaseAge": "1 day",
+    "semanticCommitType": "fix"
+  },
+  "kubernetes": {
+    "description": "The Dex fixture is a plain manifest, which the kubernetes manager only reads from files it is pointed at. config:recommended's ignorePaths would also skip it as a test/ path, which is why ignorePaths above is narrowed to node_modules.",
+    "managerFilePatterns": ["/^test/oidc/[^/]+[.]ya?ml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "A dependency bump is a chore unless it is a security fix (vulnerabilityAlerts above).",
+      "matchPackageNames": ["*"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "A major is a migration, not a bump. It waits on the Dependency Dashboard until somebody ticks it.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Valkey is pinned by tag and by digest in values.yaml: the tag is for a reader, the digest is what is pulled. Renovate rewrites both together, and a rebuilt image under the same tag arrives as a digest update - it never leaves a tag without its digest. Docker versioning keeps the -alpine3.24 suffix, so a move to a newer Alpine line is made by hand.",
+      "groupName": "valkey image",
+      "matchManagers": ["helm-values"],
+      "matchPackageNames": ["valkey/valkey"],
+      "pinDigests": true
+    },
+    {
+      "description": "The Dex image of the single sign-on fixture. It is not installed by the chart, only by whoever tries sign-on by hand, so it has its own scope and its own pull request.",
+      "groupName": "dex fixture",
+      "matchManagers": ["kubernetes"],
+      "semanticCommitScope": "oidc"
+    },
+    {
+      "description": "The workflows' actions, majors included - a major here is usually a runtime change, and the pull request's own run exercises every one of them.",
+      "groupName": "github actions",
+      "matchManagers": ["github-actions"],
+      "semanticCommitScope": "ci"
+    },
+    {
+      "description": "setup-node's node-version in guards.yml (github-actions extracts it as depName `node`), after the actions rule so that it leaves that group for this one.",
+      "groupName": "node runtime",
+      "matchDepNames": ["node"],
+      "semanticCommitScope": "ci"
+    }
+  ]
 }
