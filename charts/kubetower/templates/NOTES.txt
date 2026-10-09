@@ -3,9 +3,13 @@ KubeTower {{ .Chart.AppVersion }} is installed as {{ .Release.Name }} in namespa
 WHAT YOU JUST DEPLOYED
 ----------------------
 The console's {{ if .Values.serverProfile }}server profile (no local shell, node shell or assistant){{ else }}desktop profile, local shell included,{{ end }}
-running in a pod. NOT a multi-user console: whichever profile runs, everybody
-who signs in shares one identity - this pod's ServiceAccount. Two people on it
-at once are one user as far as the cluster is concerned.
+running in a pod. NOT a multi-user console: whichever profile runs, the console
+makes every request as this pod's ServiceAccount, so two people on it at once
+are one subject in the cluster's audit log.
+{{- if .Values.auth.oidc.issuer }} With single sign-on it first asks the
+cluster whether the person signed in may do each thing, and refuses when they
+may not.
+{{- end }}
 
 1. REACH IT
 
@@ -42,8 +46,9 @@ at once are one user as far as the cluster is concerned.
    page says the provider is unavailable and why.
 
    Everybody the provider will issue a token to for client {{ .Values.auth.oidc.clientID }}
-   is admitted, with this pod's full rights - the console has no list of who
-   may sign in. Restrict who may use that client at the provider.
+   is admitted, and gets whatever the cluster's RBAC grants them, up to this
+   pod's own role - the console has no list of who may sign in. Restrict who
+   may use that client at the provider.
 {{- $claim := .Values.auth.oidc.usernameClaim | default "email" }}
 {{- $prefix := .Values.auth.oidc.usernamePrefix }}
 {{- if eq $prefix "-" }}{{ $prefix = "" }}
@@ -142,9 +147,9 @@ at once are one user as far as the cluster is concerned.
 
      * the port-forward cap is per process - 16 forwards for everybody at once
 {{- if .Values.auth.oidc.issuer }}
-     * people sign in as themselves, and each has a session of their own - but
-       the console does not yet ask the cluster what a person may do, so every
-       one of them acts as this pod's ServiceAccount
+     * people sign in as themselves, each with a session of their own, and the
+       cluster is asked what each may do - but every request is still this
+       pod's ServiceAccount's, so the cluster's audit log cannot tell them apart
 {{- else }}
      * the session is stateless - revoking one person signs out all of them
 {{- end }}
