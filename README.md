@@ -263,6 +263,10 @@ The prefix is `auth.oidc.usernamePrefix`, which is kube-apiserver's
 | `-` | the bare claim, whatever it is. It has to be typed out: an empty value is what you get by not setting anything, so it cannot also mean a decision |
 | anything else, `oidc:` say | that string before the claim: `oidc:alice@example.com` |
 
+In a values file, quote it: `usernamePrefix: "-"`, `usernamePrefix: "oidc:"`.
+Unquoted, `-` and `oidc:` are YAML errors, and anything after a ` #` is read
+as a comment and silently dropped.
+
 So with `usernameClaim: sub` and nothing else, a RoleBinding written for
 `CiQw...` matches nobody; it has to name `https://idp.example/dex#CiQw...`.
 NOTES prints which form your values produce, and the console logs it at
@@ -286,7 +290,11 @@ if your API server trusts the same issuer, the console asserting the same
 string is what lets one RoleBinding mean the same person to `kubectl` and to
 the console. **That default is the `--oidc-*` flags'.** An API server configured
 through structured authentication (`AuthenticationConfiguration`) has no
-default, so set this value to its `claimMappings.username.prefix`.
+default, so set this value to its `claimMappings.username.prefix`. **The claim
+has to match as well**: kube-apiserver's `--oidc-username-claim` defaults to
+`sub` and the console's `usernameClaim` to `email`, so set
+`auth.oidc.usernameClaim` to the API server's claim, or to its
+`claimMappings.username.claim` under structured authentication.
 
 A prefix that would start with `system:` - Kubernetes' own users - is refused
 by the console at start-up. Changing the prefix or the claim changes everyone's

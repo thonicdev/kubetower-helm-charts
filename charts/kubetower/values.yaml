@@ -291,9 +291,12 @@ auth:
     # default is the --oidc-* flags'. A cluster configured through structured
     # authentication has none: set this to its claimMappings.username.prefix
     # for one RoleBinding to mean the same person to kubectl and to the
-    # console. A prefix that would start with `system:` is refused by the
-    # console at start-up. Needs a console image that knows
-    # KT_OIDC_USERNAME_PREFIX; an older one ignores it.
+    # console - and set usernameClaim to the API server's claim too, since
+    # its --oidc-username-claim defaults to `sub` and the console's to `email`.
+    # Quote the value in a values file: an unquoted `-` or `oidc:` does not
+    # parse, and anything after ` #` is a comment. A prefix that would start
+    # with `system:` is refused by the console at start-up. Needs a console
+    # image that knows KT_OIDC_USERNAME_PREFIX; an older one ignores it.
     usernamePrefix: ""
 
     # Prepended to every group before the console asserts it, like
