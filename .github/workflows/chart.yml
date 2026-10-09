@@ -51,7 +51,34 @@ jobs:
             --set auth.oidc.discoveryURL=http://dex.dex.svc:5556/dex \
             --set auth.oidc.groupsClaim=groups --set auth.oidc.usernameClaim=email \
             --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
-            --set auth.localAccount=true
+            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true
+
+      # The username prefix is passed as it is, or not at all. Unset must leave
+      # the variable out, so the console applies kube-apiserver's default; `-`
+      # is the console's own spelling of "no prefix" and must arrive as `-`,
+      # not be dropped as if it were empty. A RoleBinding names the result, so
+      # a value lost here is everybody's rights gone.
+      - name: The username prefix reaches the console only when it is set
+        run: |
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          prefix() {
+            helm template kubetower ./charts/kubetower $oidc "$@" | python -c '
+          import sys, yaml
+          env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if e["name"] == "KT_OIDC_USERNAME_PREFIX"]
+          print(env[0]["value"] if env else "<absent>")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(prefix "$@")
+            [ "$got" = "$want" ] || { echo "with '$*': want $want, got $got"; exit 1; }
+            echo "with '${*:-nothing set}': $got"
+          }
+          check '<absent>'
+          check '-'        --set auth.oidc.usernamePrefix=-
+          check 'oidc:'    --set auth.oidc.usernamePrefix=oidc:
+          check 'https://idp.example/dex#' --set-string 'auth.oidc.usernamePrefix=https://idp.example/dex#'
 
       # `helm lint` does not parse what it renders; it can pass on a template
       # that produces invalid YAML. This is the parse.

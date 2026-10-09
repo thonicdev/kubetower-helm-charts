@@ -247,6 +247,50 @@ password and one session are still shared, so the warning above stands either
 way. It is on by default because the alternative was the wrong way round: the
 shell the desktop profile keeps is a shell holding this pod's ServiceAccount.
 
+## Single sign-on: the name a RoleBinding names
+
+With `auth.oidc` set, the console checks a person's rights with the cluster
+under a name, and **a RoleBinding has to name that string, prefix included**.
+The prefix is `auth.oidc.usernamePrefix`, which is kube-apiserver's
+`--oidc-username-prefix` with the same default and the same spelling of "none":
+
+| `auth.oidc.usernamePrefix` | The name a RoleBinding names |
+|---|---|
+| unset (the default) | the issuer and `#` before the claim: `https://idp.example/dex#CiQw...`. With the `email` claim, which is the default claim, the bare address: `alice@example.com` |
+| `-` | the bare claim, whatever it is. It has to be typed out: an empty value is what you get by not setting anything, so it cannot also mean a decision |
+| anything else, `oidc:` say | that string before the claim: `oidc:alice@example.com` |
+
+So with `usernameClaim: sub` and nothing else, a RoleBinding written for
+`CiQw...` matches nobody; it has to name `https://idp.example/dex#CiQw...`.
+NOTES prints which form your values produce, and the console logs it at
+start-up.
+
+```yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata: { name: alice-edit, namespace: team-a }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: "https://idp.example/dex#CiQw..."   # the prefixed name, not the bare claim
+```
+
+Why a prefix at all: without one, `alice` from the provider is the `alice` of a
+client certificate or of another authenticator, and a RoleBinding written for
+one grants the other. Why kube-apiserver's default rather than a stricter one:
+if your API server trusts the same issuer, the console asserting the same
+string is what lets one RoleBinding mean the same person to `kubectl` and to
+the console. **That default is the `--oidc-*` flags'.** An API server configured
+through structured authentication (`AuthenticationConfiguration`) has no
+default, so set this value to its `claimMappings.username.prefix`.
+
+A prefix that would start with `system:` - Kubernetes' own users - is refused
+by the console at start-up. Changing the prefix or the claim changes everyone's
+name: people signed in under the old one sign in again, and RoleBindings
+written for it match nobody. The value needs a console image that knows
+`KT_OIDC_USERNAME_PREFIX`; an older one ignores it.
+
 ## The OIDC fixture
 
 `test/oidc/` is a [Dex](https://dexidp.io), for developing single sign-on

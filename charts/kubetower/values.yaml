@@ -275,6 +275,26 @@ auth:
     usernameClaim: ""
     groupsClaim: ""
 
+    # Prepended to the person's name before the console checks their rights,
+    # logs it or stores it - kube-apiserver's --oidc-username-prefix, with the
+    # same default and the same spelling of "none":
+    #
+    #   ""        the issuer followed by `#` (https://idp.example/dex#CiQw...),
+    #             except when the claim is `email`, which stays bare
+    #   "-"       no prefix at all, typed out on purpose
+    #   anything  that string, as it is
+    #
+    # **A RoleBinding names the prefixed string.** With the default and a claim
+    # other than `email`, a RoleBinding written for the bare claim matches
+    # nobody; NOTES and the console's start-up log say which string it is. That
+    # default is the --oidc-* flags'. A cluster configured through structured
+    # authentication has none: set this to its claimMappings.username.prefix
+    # for one RoleBinding to mean the same person to kubectl and to the
+    # console. A prefix that would start with `system:` is refused by the
+    # console at start-up. Needs a console image that knows
+    # KT_OIDC_USERNAME_PREFIX; an older one ignores it.
+    usernamePrefix: ""
+
     # Prepended to every group before the console asserts it, like
     # kube-apiserver's --oidc-groups-prefix. A name, never a permission.
     groupsPrefix: ""

@@ -157,6 +157,12 @@ spec:
             - name: KT_OIDC_USERNAME_CLAIM
               value: {{ .usernameClaim | quote }}
             {{- end }}
+            {{- if .usernamePrefix }}
+            # Passed as it is: `-` is the console's own spelling of "no
+            # prefix", and unset leaves the console its default.
+            - name: KT_OIDC_USERNAME_PREFIX
+              value: {{ .usernamePrefix | quote }}
+            {{- end }}
             {{- if .groupsClaim }}
             - name: KT_OIDC_GROUPS_CLAIM
               value: {{ .groupsClaim | quote }}

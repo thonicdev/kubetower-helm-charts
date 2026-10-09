@@ -44,6 +44,21 @@ at once are one user as far as the cluster is concerned.
    Everybody the provider will issue a token to for client {{ .Values.auth.oidc.clientID }}
    is admitted, with this pod's full rights - the console has no list of who
    may sign in. Restrict who may use that client at the provider.
+{{- $claim := .Values.auth.oidc.usernameClaim | default "email" }}
+{{- $prefix := .Values.auth.oidc.usernamePrefix }}
+{{- if eq $prefix "-" }}{{ $prefix = "" }}
+{{- else if and (eq $prefix "") (ne $claim "email") }}{{ $prefix = printf "%s#" .Values.auth.oidc.issuer }}
+{{- end }}
+
+   A RoleBinding names a person as the console checks them:
+{{- if $prefix }}
+   "{{ $prefix }}" followed by their {{ $claim }} claim, as in {{ $prefix }}<{{ $claim }}>.
+   A RoleBinding written for the bare claim matches nobody.
+{{- else }}
+   their {{ $claim }} claim, with no prefix.
+{{- end }}
+   auth.oidc.usernamePrefix is {{ if .Values.auth.oidc.usernamePrefix }}"{{ .Values.auth.oidc.usernamePrefix }}"{{ else }}unset, which is kube-apiserver's default{{ end }}.
+   The console's start-up log names the same string.
 {{- if not .Values.auth.localAccount }}
 
    There is NO shared password (auth.localAccount is false): its routes are
