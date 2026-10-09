@@ -60,6 +60,10 @@ jobs:
       # a value lost here is everybody's rights gone.
       - name: The username prefix reaches the console only when it is set
         run: |
+          # The default shell is `bash -e` without pipefail: a render that
+          # failed would hand python an empty stream, which prints `<absent>`,
+          # which is exactly what the unset case expects.
+          set -o pipefail
           oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
           prefix() {
             helm template kubetower ./charts/kubetower $oidc "$@" | python -c '
