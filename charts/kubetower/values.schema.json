@@ -6,7 +6,16 @@
     "auth": {
       "type": "object",
       "properties": {
-        "_drawnSessionSecret": false
+        "_drawnSessionSecret": false,
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "usernamePrefix": {
+              "$comment": "Compared with \"-\" in NOTES. A boolean or a number - `--set usernamePrefix=true`, or an unquoted `no` in a values file - would otherwise fail there with an error that names no value.",
+              "type": "string"
+            }
+          }
+        }
       }
     },
     "valkey": {
