@@ -206,6 +206,12 @@ rbac:
   # port-forward to the Prometheus pod, which needs rbac.exec, and with neither
   # it reports that it cannot reach Prometheus.
   prometheusProxy: false
+  # Narrows prometheusProxy to the Services named here, as `<name>:<port>` -
+  # the form the console asks for, e.g. prometheus-server:80. In a ClusterRole
+  # a name matches in every namespace. Empty grants the proxy to every
+  # Service. The console reaches Prometheus only through a Service it found,
+  # so name the one your cluster runs.
+  prometheusProxyServices: []
 
 # ---------------------------------------------------------------------------
 # The front door
@@ -511,9 +517,25 @@ securityContext:
     drop:
       - ALL
   # The process writes to three places, and each is a volume: the state
-  # directory, $HOME and /tmp (the Deployment says what goes in each). Nothing
-  # else on the root filesystem needs writing, so none of it is writable.
+  # directory, $HOME (with the assistant's configuration directory, its own
+  # volume, inside it) and /tmp - the Deployment says what goes in each.
+  # Nothing else on the root filesystem needs writing, so none of it is
+  # writable. If something you add writes elsewhere, mount a volume there
+  # through extraVolumes; false is the way back, at the cost of the whole root
+  # filesystem. Note that /tmp and /home/kubetower are now the chart's own
+  # mounts, so an extraVolumeMounts entry at either path is a duplicate the
+  # API server refuses.
   readOnlyRootFilesystem: true
+
+# The size of each emptyDir the console writes besides its state directory.
+# Past it, the kubelet evicts the pod - a runaway fills its own volume, not the
+# node's disk. Empty means no limit. Each holds caches and scratch files that
+# are meant to be small: CLI caches in $HOME, the assistant's settings, the
+# terminal's session directories in /tmp.
+scratchSizeLimits:
+  home: 256Mi
+  claude: 256Mi
+  tmp: 1Gi
 
 # Three probes, two meanings.
 #
@@ -663,4 +685,7 @@ networkPolicy:
   #   - namespaceSelector:
   #       matchLabels:
   #         kubernetes.io/metadata.name: ingress-nginx
+  # **Not for a controller on hostNetwork**: its traffic arrives from node
+  # addresses, which no namespaceSelector matches, so that narrowing would shut
+  # it out. Name the nodes' CIDR with an ipBlock instead, or leave this empty.
   consoleFrom: []

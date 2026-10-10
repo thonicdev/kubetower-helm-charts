@@ -194,9 +194,14 @@ yours).
 ### The pod
 
 - **A read-only root filesystem.** The console writes to its state directory,
-  to `$HOME` (the caches its tools keep) and to `/tmp` (the terminal's work
-  root and its per-context homes); each is a volume, and nothing else is
-  writable. It runs as uid 100, drops every capability, cannot escalate, uses
+  to `$HOME` (the caches its tools keep, and the assistant's configuration in
+  `~/.claude`, which it writes at every start) and to `/tmp` (the terminal's
+  work root and its per-context homes); each is a volume, the emptyDirs bounded
+  by `scratchSizeLimits`, and nothing else is writable. `/tmp` and
+  `/home/kubetower` are the chart's own mounts, so an `extraVolumeMounts` entry
+  at either is a duplicate the API server refuses. If something you add writes
+  elsewhere, mount a volume there; `securityContext.readOnlyRootFilesystem=false`
+  is the way back. It runs as uid 100, drops every capability, cannot escalate, uses
   the runtime's default seccomp profile, and gets a projected ServiceAccount
   token that expires after an hour instead of the legacy one.
 - **Shutdown.** On deletion, `preStop` pauses five seconds so the endpoint's
@@ -262,7 +267,7 @@ wildcard read, and a wildcard is worth typing out deliberately.
 |---|---|
 | `rbac.write` | Edit, create, delete; restart, scale, suspend, resume, trigger; cordon, uncordon and drain a node (`patch` on `nodes`); evict a pod (`create` on `pods/eviction`) |
 | `rbac.exec` | A shell in a pod, a port-forward, and the fallback route to Prometheus |
-| `rbac.prometheusProxy` | Prometheus through the API server's service proxy (`get` on `services/proxy`), which is a proxy to every Service in the cluster |
+| `rbac.prometheusProxy` | Prometheus through the API server's service proxy (`get` on `services/proxy`), which is a proxy to every Service in the cluster unless `rbac.prometheusProxyServices` names yours as `<name>:<port>` |
 | `rbac.nodeProxy` | Per-node usage from the kubelet where there is no metrics-server |
 
 What two of them amount to, in plain terms: **`rbac.write` is cluster-admin on

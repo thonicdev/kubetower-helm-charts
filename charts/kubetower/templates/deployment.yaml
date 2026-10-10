@@ -278,6 +278,12 @@ spec:
             # for: nothing there is meant to outlive the process.
             - name: home
               mountPath: /home/kubetower
+            # CLAUDE_CONFIG_DIR. The console writes the assistant's settings
+            # there at every start, under either profile, without creating
+            # the directory first - so it has to exist, and an emptyDir
+            # mounted at it is what makes it exist on an empty $HOME.
+            - name: claude
+              mountPath: /home/kubetower/.claude
             - name: tmp
               mountPath: /tmp
             {{- with .Values.extraVolumeMounts }}
@@ -321,10 +327,26 @@ spec:
                     - path: namespace
                       fieldRef:
                         fieldPath: metadata.namespace
+        # Each bounded (scratchSizeLimits): a write that runs away fills its
+        # own volume and evicts this pod, rather than the node's disk.
         - name: home
-          emptyDir: {}
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.home }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
+        - name: claude
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.claude }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.tmp }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

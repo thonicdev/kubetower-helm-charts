@@ -140,7 +140,7 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
    the rail, column and density preferences cannot be changed, the settings
    are read-only, port-forwards are off, and there is no archive.
 
-   The consoles are spread across nodes{{ if .Values.podDisruptionBudget.enabled }} and a PodDisruptionBudget lets
+   {{ if .Values.topologySpreadConstraints }}The consoles follow your topologySpreadConstraints{{ else }}The consoles are spread across nodes{{ end }}{{ if .Values.podDisruptionBudget.enabled }} and a PodDisruptionBudget lets
    them go {{ .Values.podDisruptionBudget.maxUnavailable }} at a time{{ else }} (podDisruptionBudget is off, so a drain
    may take them all at once){{ end }}. VALKEY IS ONE POD, with nothing on
    disk: draining its node, upgrading it or losing it signs everybody out. It

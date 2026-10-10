@@ -229,11 +229,17 @@ rules:
   # prom.go: /api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The
   # verb is the request's, and the console only reads.
   #
-  # It is a proxy to every Service in the cluster, not only Prometheus - a
-  # ClusterRole cannot name a Service it has not discovered yet. GET requests
-  # only, but to any HTTP endpoint that trusts the cluster network.
+  # Unnarrowed, it is a proxy to every Service in the cluster, not only
+  # Prometheus - GET requests only, but to any HTTP endpoint that trusts the
+  # cluster network. The chart cannot know where Prometheus runs, so the
+  # narrowing is yours: rbac.prometheusProxyServices names the Services, in
+  # the `<name>:<port>` form the console requests, as resourceNames.
   - apiGroups: [""]
     resources: ["services/proxy"]
+    {{- with .Values.rbac.prometheusProxyServices }}
+    resourceNames:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     verbs: ["get"]
 {{- end }}
 {{- if .Values.rbac.nodeProxy }}

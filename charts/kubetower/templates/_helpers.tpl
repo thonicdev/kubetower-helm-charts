@@ -170,7 +170,17 @@ to write instead, rather than silently leaving the runtime unpaced.
 {{- $own := false }}
 {{- range .Values.extraEnv }}{{ if eq (toString .name) "GOMEMLIMIT" }}{{ $own = true }}{{ end }}{{ end }}
 {{- $limit := "" }}
-{{- with .Values.resources }}{{ with .limits }}{{ $limit = toString (.memory | default "") }}{{ end }}{{ end }}
+{{- with .Values.resources }}{{ with .limits }}{{ with .memory }}
+{{- /* An unquoted byte count in a values file reaches Helm as a float64,
+       which toString writes as 1.073741824e+09. A whole number is the
+       integer the user wrote; anything else is left as it is and refused
+       below. */}}
+{{- if and (kindIs "float64" .) (eq (. | int64 | float64) .) }}
+{{- $limit = . | int64 | toString }}
+{{- else }}
+{{- $limit = toString . }}
+{{- end }}
+{{- end }}{{ end }}{{ end }}
 {{- $percent := int .Values.goMemLimitPercent }}
 {{- if and $limit (gt $percent 0) (not $own) }}
 {{- if or (gt $percent 100) (not (regexMatch "^[0-9]+(k|M|G|T|Ki|Mi|Gi|Ti)?$" $limit)) }}
