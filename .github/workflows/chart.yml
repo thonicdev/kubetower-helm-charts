@@ -56,6 +56,18 @@ jobs:
             --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
             --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true
 
+      # The development environment's values, dev/values.yaml, lint, render,
+      # and agree with the Dex fixture they are written for: its issuer, its
+      # client and that client's secret and redirect. Two files describing one
+      # environment drift apart quietly, and every way they do looks the same in
+      # a browser - a sign-in that fails. --self-test first: it changes one
+      # thing at a time on the real render and fails unless each is refused.
+      - name: The development values render, and agree with the Dex fixture
+        run: |
+          set -o pipefail
+          helm lint ./charts/kubetower -f dev/values.yaml
+          python test/dev-values-check.py --self-test
+
       # The username prefix is passed as it is, or not at all. Unset must leave
       # the variable out, so the console applies kube-apiserver's default; `-`
       # is the console's own spelling of "no prefix" and must arrive as `-`,

@@ -42,6 +42,7 @@ advance is the only reason this file leads with it.
   (the chart refuses to render without a tag while its appVersion is a
   placeholder), `python test/rbac-check.py --self-test`,
   `python test/console-needs-check.py --self-test`, `python test/checksum-check.py`,
+  `python test/dev-values-check.py --self-test`,
   `python test/derive-needs.py --self-test --core <a checkout of the console>`
   when you change `charts/kubetower/console-needs.yaml`,
   `bash test/public-check.sh --self-test && bash test/public-check.sh tree`

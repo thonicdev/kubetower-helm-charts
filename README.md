@@ -19,6 +19,7 @@ whole point of reading a chart.
 |---|---|
 | `charts/kubetower/` | The console in a pod |
 | `charts/kubetower/console-needs.yaml` | What the console asks the cluster for, request by request. The `ClusterRole` is rendered from it |
+| `dev/values.yaml` | The values a development install in a local cluster uses, with the fixture below |
 | `test/oidc/` | A Dex fixture for developing single sign-on against. Not part of the chart |
 | `.github/workflows/release.yml` | Publishes the chart on a tag `kubetower-<version>` |
 
@@ -428,6 +429,28 @@ issuer is set. The groups prefix is refused the same way. Changing the prefix or
 name: people signed in under the old one sign in again, and RoleBindings
 written for it match nobody. The value needs a console image that knows
 `KT_OIDC_USERNAME_PREFIX`; an older one ignores it.
+
+## A development install
+
+`dev/values.yaml` is the environment a console under development runs in, on
+Docker Desktop's Kubernetes: the server profile, the fixture below as identity
+provider, the shared account beside it (`admin` / `password`), and a
+`kubetower:dev` image built from a checkout of the console and never pulled.
+Every credential in it is public; it is for a laptop and nothing else.
+
+```bash
+# in a checkout of the console
+docker build --build-arg KT_VERSION=dev -t kubetower:dev .
+# here
+kubectl apply -f test/oidc/dex.yaml
+kubectl -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
+helm upgrade --install kubetower ./charts/kubetower \
+  --namespace kubetower --create-namespace -f dev/values.yaml
+kubectl -n kubetower port-forward svc/kubetower 8824:5823   # then http://127.0.0.1:8824
+```
+
+`chart.yml` renders the chart with this file and fails if it stops agreeing with
+the fixture: the issuer, the client, its secret and the redirect it registers.
 
 ## The OIDC fixture
 
