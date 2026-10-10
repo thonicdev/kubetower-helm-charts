@@ -257,8 +257,11 @@ jobs:
           check "0 1 -" --set replicaCount=2 --set persistence.enabled=false --set podDisruptionBudget.enabled=false $oidc
 
       # The root filesystem is read-only, and each directory the console writes
-      # - the state directory, $HOME and /tmp - is a volume. Under both
-      # profiles, since the desktop one writes the same places.
+      # - the state directory, $HOME, the assistant's configuration directory
+      # inside it, and /tmp - is a volume. The configuration directory has to
+      # exist at start: the console writes into it without creating it, under
+      # either profile. Each emptyDir carries a size limit. Under both profiles,
+      # since the desktop one writes the same places.
       - name: The root filesystem is read-only, and every directory the console writes is a volume
         run: |
           set -o pipefail
@@ -272,12 +275,13 @@ jobs:
           assert c["securityContext"].get("readOnlyRootFilesystem") is True, c["securityContext"]
           volumes = {v["name"]: v for v in spec["volumes"]}
           mounts = {m["mountPath"]: m for m in c["volumeMounts"]}
-          for path in ["/var/lib/kubetower", "/home/kubetower", "/tmp"]:
+          for path in ["/var/lib/kubetower", "/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
               assert path in mounts, (path, "is not mounted", sorted(mounts))
               assert not mounts[path].get("readOnly"), (path, "is mounted read-only")
               assert not mounts[path].get("subPath"), (path, "mounts only a sub-path")
-          for path in ["/home/kubetower", "/tmp"]:
+          for path in ["/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
               assert "emptyDir" in volumes[mounts[path]["name"]], (path, "is not an emptyDir")
+              assert volumes[mounts[path]["name"]]["emptyDir"].get("sizeLimit"), (path, "has no sizeLimit")
           print("read-only root, writable:", ", ".join(sorted(p for p in mounts if not mounts[p].get("readOnly"))))' \
               | sed "s/^/serverProfile=$profile: /"
           done
@@ -304,6 +308,32 @@ jobs:
           env = {e["name"]: e.get("value") for e in c["env"]}
           assert env.get("GOMEMLIMIT") == str(1024 ** 3 * 90 // 100), env.get("GOMEMLIMIT")
           print("preStop", pause, "s, grace", grace, "s, GOMEMLIMIT", env["GOMEMLIMIT"])'
+          # Each unit is its own multiplier, so more than one is checked; and a
+          # plain byte count in a values file, which YAML hands Helm as a float.
+          mem() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          c = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          print({e["name"]: e.get("value") for e in c["env"]}.get("GOMEMLIMIT"))'
+          }
+          mem_is() {
+            want="$1"; shift
+            got=$(mem "$@")
+            [ "$got" = "$want" ] || { echo "with $*: GOMEMLIMIT is $got, want $want"; exit 1; }
+            echo "with $*: GOMEMLIMIT $got"
+          }
+          mem_is 483183820 --set resources.limits.memory=512Mi
+          mem_is 1350000000 --set resources.limits.memory=1500M
+          mem_is 92160 --set resources.limits.memory=100Ki
+          values=$(mktemp)
+          printf 'resources:\n  limits:\n    memory: 1073741824\n' > "$values"
+          mem_is 966367641 -f "$values"
+          if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci --set resources.limits.memory=1.5Gi 2>&1); then
+            echo "NOT REFUSED: a 1.5Gi limit"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'resources.limits.memory is "1.5Gi"' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a 1.5Gi limit is refused, naming the value"
           # Set by hand in extraEnv, GOMEMLIMIT is not rendered twice.
           n=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci \
                 --set 'extraEnv[0].name=GOMEMLIMIT' --set 'extraEnv[0].value=500MiB' | grep -c 'name: GOMEMLIMIT')
@@ -388,12 +418,15 @@ jobs:
           refused 'auth.oidc.usernamePrefix is " System:foo"' --set-string 'auth.oidc.usernamePrefix= System:foo'
           refused 'auth.oidc.groupsPrefix is "system:"' --set-string auth.oidc.groupsPrefix=system:
           refused 'auth.oidc.groupsPrefix is "SYSTEM:x"' --set-string auth.oidc.groupsPrefix=SYSTEM:x
+          # Unset, the prefix is the issuer and '#' - unless the claim is email.
+          refused 'auth.oidc.usernamePrefix is unset' --set auth.oidc.issuer=system:idp --set auth.oidc.usernameClaim=sub
           renders $oidc --set-string auth.oidc.usernamePrefix=-
           renders $oidc --set-string auth.oidc.usernamePrefix=oidc:
           renders $oidc
           renders $oidc --set auth.oidc.usernameClaim=sub
           renders $oidc --set-string auth.oidc.groupsPrefix=oidc:
           renders --set-string auth.oidc.usernamePrefix=system:foo --set-string auth.oidc.groupsPrefix=system:
+          renders $oidc --set auth.oidc.issuer=system:idp
 
   rbac:
     name: the ClusterRole carries no escalation verb and no stray wildcard, and grants what the console asks for
