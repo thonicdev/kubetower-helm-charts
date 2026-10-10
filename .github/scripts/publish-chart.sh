@@ -65,7 +65,9 @@ helm push "$pkg" "$repo" "${plain[@]}" 2>&1 | tee "$work/push.log"
 digest=$(sed -n 's/^Digest:[[:space:]]*//p' "$work/push.log")
 [ -n "$digest" ] || { echo "the push printed no digest - nothing says the registry holds the chart" >&2; exit 1; }
 
-# Read it back, as somebody installing it would.
+# Read it back, as somebody installing it would. helm pull writes into the
+# destination and does not create it.
+mkdir -p "$work/back"
 helm pull "$repo/$name" --version "$version" --destination "$work/back" "${plain[@]}"
 back="$work/back/$name-$version.tgz"
 [ -f "$back" ] || { echo "the registry did not return $name $version" >&2; exit 1; }
