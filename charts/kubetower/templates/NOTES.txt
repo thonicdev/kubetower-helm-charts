@@ -1,14 +1,32 @@
-KubeTower {{ .Chart.AppVersion }} is installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+KubeTower is installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}, from the image
+{{ include "kubetower.image" . }}.
 
 WHAT YOU JUST DEPLOYED
 ----------------------
-The console's {{ if .Values.serverProfile }}server profile (no local shell, node shell or assistant){{ else }}desktop profile, local shell included,{{ end }}
-running in a pod. NOT a multi-user console: whichever profile runs, the console
-makes every request as this pod's ServiceAccount, so two people on it at once
-are one subject in the cluster's audit log.
+The console's {{ if .Values.serverProfile }}server profile (no local shell, node shell or assistant;
+it reads this pod's own ServiceAccount){{ else }}desktop profile, local shell included,{{ end }}
+running in a pod. Whichever profile runs, the console makes every request as
+this pod's ServiceAccount, so the cluster's audit log names the ServiceAccount
+and not the person.
 {{- if .Values.auth.oidc.issuer }} With single sign-on it first asks the
-cluster whether the person signed in may do each thing, and refuses when they
-may not.
+cluster whether the person signed in may do each thing, refuses when they
+may not, and its own log names them.
+{{- else }} With the shared password, whoever holds it gets
+everything this pod's role grants, and nothing records who they were.
+{{- end }}
+{{- if hasPrefix "ghcr.io/thonicdev/" .Values.image.repository }}
+
+THE IMAGE IS PRIVATE while thonicdev/kubetower is: a package on ghcr.io inherits
+its repository's access. If the pod stays in ImagePullBackOff, the nodes need a
+token with read:packages from somebody who can read that repository:
+
+  kubectl --context <your-context> -n {{ .Release.Namespace }} create secret docker-registry ghcr-pull \
+    --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+
+and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
+{{- if .Values.image.pullSecrets }} This release names
+{{ len .Values.image.pullSecrets }} pull Secret(s) already.
+{{- end }}
 {{- end }}
 
 1. REACH IT
@@ -107,8 +125,10 @@ may not.
    Secrets and Helm releases . {{ if and .Values.rbac.read .Values.rbac.readSecrets }}yes - every Secret, this release's own session key included{{ else }}NO - those two pages will report a denial{{ end }}
    Custom resources .......... {{ if .Values.rbac.customResources }}yes (wildcard read is granted){{ else }}NO - rbac.customResources is false{{ end }}
    CPU/memory columns ........ {{ if .Values.rbac.metrics }}where metrics-server is installed{{ else }}NO - rbac.metrics is false{{ end }}
-   Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone with the password{{ else }}no - rbac.write is false{{ end }}
-   Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone with the password{{ else }}no - rbac.exec is false{{ end }}
+   Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone who signs in{{ else }}no - rbac.write is false{{ end }}
+   Cordon, drain, evict ...... {{ if .Values.rbac.write }}YES - under rbac.write{{ else }}no - rbac.write is false{{ end }}
+   Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone who signs in{{ else }}no - rbac.exec is false{{ end }}
+   Prometheus graphs ......... {{ if .Values.rbac.prometheusProxy }}through the service proxy - which reaches every Service's HTTP GETs{{ else if .Values.rbac.exec }}through a port-forward to the Prometheus pod (rbac.prometheusProxy is false){{ else }}NO - rbac.prometheusProxy and rbac.exec are both false{{ end }}
    Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
    Event archive, settings ... {{ if .Values.persistence.enabled }}kept in the PersistentVolumeClaim{{ else }}NO - persistence is off, so the console offers neither{{ end }}
 
@@ -118,8 +138,13 @@ may not.
    confirmation plans and a short-lived marker per completed sign-in through Valkey
    ({{ include "kubetower.valkeyName" . }}). What only one pod could hold is not offered:
    the rail, column and density preferences cannot be changed, the settings
-   are read-only, port-forwards are off, and there is no archive. A restart of
-   the Valkey pod signs everybody out.
+   are read-only, port-forwards are off, and there is no archive.
+
+   The consoles are spread across nodes{{ if .Values.podDisruptionBudget.enabled }} and a PodDisruptionBudget lets
+   them go {{ .Values.podDisruptionBudget.maxUnavailable }} at a time{{ else }} (podDisruptionBudget is off, so a drain
+   may take them all at once){{ end }}. VALKEY IS ONE POD, with nothing on
+   disk: draining its node, upgrading it or losing it signs everybody out. It
+   has no PodDisruptionBudget, because one on a single pod blocks the drain.
 {{- if not .Values.valkey.existingSecret }}
 
    Its password was drawn by this chart and is read back on every upgrade. A
@@ -138,14 +163,15 @@ may not.
 {{- end }}
    kubectl --context <your-context> -n {{ .Release.Namespace }} logs deploy/{{ include "kubetower.fullname" . }}
 
-   /readyz is a real readiness signal: it goes unready when the kubeconfig
-   stops reading or no context answers, not merely when the process dies.
+   Readiness is {{ .Values.readinessProbe.httpGet.path | default "set in your values" }}.{{ if eq (toString .Values.readinessProbe.httpGet.path) "/healthz" }} It follows the console, not the API
+   server: when the cluster does not answer, the pod stays in the Service and
+   its health page says so, instead of the Service emptying.{{ end }}
 
 5. BEFORE YOU SHARE THE URL WITH ANYBODY
 
    Do not. What makes this single-user is open work:
 
-     * the port-forward cap is per process - 16 forwards for everybody at once
+     * the port-forward cap is per process - forwards are shared by everybody at once
 {{- if .Values.auth.oidc.issuer }}
      * people sign in as themselves, each with a session of their own, and the
        cluster is asked what each may do - but every request is still this

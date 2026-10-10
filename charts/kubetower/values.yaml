@@ -4,24 +4,22 @@
 # READ THIS FIRST
 #
 # By default this chart deploys the console's **server profile**:
-# `serverProfile: true` below passes `--incluster`, which removes the local
-# shell, the node shell and the assistant. Setting it false deploys the desktop
-# profile on a machine that happens to be a pod, shell included. Neither
-# setting makes it a shared multi-user console: the binary still has no
-# per-user identity towards the cluster and no in-cluster client of its own
-# (`InClusterConfig` appears in no non-test file). Everything that follows
-# from that:
+# `serverProfile: true` below passes `--incluster`, which reads this pod's own
+# ServiceAccount and removes the local shell, the node shell and the assistant.
+# Setting it false deploys the desktop profile on a machine that happens to be
+# a pod, shell included. What holds under either profile:
 #
-#   * With no identity provider: one password, one session, one identity.
-#     There are no users. With `auth.oidc` set, people sign in as themselves
-#     and each gets a session of their own - but see the next point, which
-#     holds either way.
-#   * Everything the console does, it does **as this pod's ServiceAccount**,
-#     not as whoever signed in, and the cluster's audit log says so. With
-#     `auth.oidc` set, it first asks the cluster whether the person may read
-#     or change the thing and refuses when they may not, so the RBAC below is
-#     a ceiling and each person gets what their own RoleBindings grant. The
-#     password names nobody: whatever RBAC you grant below, its holder gets.
+#   * With no identity provider: one password and one shared account - the
+#     password names nobody. With `auth.oidc` set, people sign in as
+#     themselves, each with a session of their own, and the console's own log
+#     names the person behind every write.
+#   * Every request reaches the cluster **as this pod's ServiceAccount**, not
+#     as whoever signed in, and the API server's audit log names the
+#     ServiceAccount. With `auth.oidc` set, the console first asks the cluster
+#     whether the person may read or change the thing and refuses when they
+#     may not, so the RBAC below is a ceiling and each person gets what their
+#     own RoleBindings grant, up to it. The shared password's holder gets the
+#     whole ceiling.
 #   * The port-forward cap is per-process. `forwardPorts` is shared by
 #     everybody at once, not per person.
 #   * Revoking access means changing the password and restarting, which signs
@@ -32,18 +30,29 @@
 # ---------------------------------------------------------------------------
 
 image:
-  # There is no published image. Nothing in thonicdev/kubetower pushes one:
-  # `.github/workflows/release.yml` says "Not `packages`, because nothing
-  # pushes an image", `security.yml` builds with `push: false`, and `ci.yml`
-  # tags `kubetower:ci` locally and throws it away. You build it yourself, from
-  # the repository's Dockerfile, and make it reachable from the cluster.
-  repository: kubetower
-  # Empty means the chart's appVersion, which is a placeholder. Set this.
+  # What the console's release workflow publishes: one image per tag
+  # v<version>, at ghcr.io/thonicdev/kubetower:<version>, built from the
+  # repository's Dockerfile and stamped with that version. There is no
+  # `latest`.
+  #
+  # **Private while thonicdev/kubetower is**: a package inherits its
+  # repository's access, so until the repository is public, pulling needs a
+  # token with `read:packages` from somebody who can read it, in a Secret named
+  # under pullSecrets below. NOTES says so on every install.
+  repository: ghcr.io/thonicdev/kubetower
+  # Empty means the chart's appVersion. While that is the 0.0.0-dev
+  # placeholder the render is refused, because no registry holds that image:
+  # set a published version here, or your own build's tag with your own
+  # repository above.
   tag: ""
-  # IfNotPresent so a locally built image is used where the node can already
-  # see it (Docker Desktop, kind after `kind load`, minikube after
-  # `minikube image load`). Change to Always once a registry exists.
+  # IfNotPresent: a version tag is never moved, so a node that has it has the
+  # right one - and a locally built image the node can already see (kind after
+  # `kind load`, minikube after `minikube image load`) is used as it is.
   pullPolicy: IfNotPresent
+  # Secrets of type kubernetes.io/dockerconfigjson, by name:
+  #   kubectl -n <namespace> create secret docker-registry ghcr-pull
+  #     --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+  #   pullSecrets: [{name: ghcr-pull}]
   pullSecrets: []
 
 # One by default. Above one, the chart also deploys a small Valkey (see
@@ -62,7 +71,28 @@ image:
 # `persistence.enabled` (one volume cannot be two consoles' state), with
 # `serverProfile: false`, or with the shared password offered and no
 # `auth.passwordHash` (each pod would draw its own).
+#
+# **What several replicas buy, and what they do not.** The consoles get a
+# PodDisruptionBudget (one at a time, see podDisruptionBudget) and a spread
+# across nodes (see topologySpreadConstraints), so a node drain or a rolling
+# upgrade leaves one serving. **Valkey is one pod**, holding nothing on disk:
+# when it is evicted - a drain of its node, an upgrade of its image, a node
+# lost - everybody is signed out, one click each while the identity
+# provider's own session is alive, and a sign-in in its last seconds fails
+# once. It has no PodDisruptionBudget on purpose: a budget on a single pod
+# blocks the drain of its node outright.
 replicaCount: 1
+
+# With several replicas only. maxUnavailable rather than minAvailable, so it
+# means "one at a time" whatever replicaCount is.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Empty: with several replicas the chart spreads the consoles across nodes
+# (kubernetes.io/hostname, maxSkew 1, ScheduleAnyway - a one-node cluster still
+# schedules them all). Anything here replaces that, at any replica count.
+topologySpreadConstraints: []
 
 nameOverride: ""
 fullnameOverride: ""
@@ -71,13 +101,18 @@ fullnameOverride: ""
 # How the pod reaches the API server
 # ---------------------------------------------------------------------------
 #
-# The binary reads KUBECONFIG and nothing else - it has no in-cluster path. So
-# the chart writes a kubeconfig that points at kubernetes.default.svc and uses
-# the projected ServiceAccount token. That is the whole trick, and it is the
-# reason this chart works at all.
+# **Under the server profile (the default), none of this is read.** The
+# console reads this pod's own ServiceAccount - the API server's address from
+# the environment every pod is given, the projected token and CA the
+# Deployment mounts - and does not read KUBECONFIG at all, so the chart renders
+# no kubeconfig.
+#
+# The desktop profile (serverProfile: false) reads KUBECONFIG and nothing else.
+# For it, the chart writes a kubeconfig that points at kubernetes.default.svc
+# and uses the same projected token.
 kubeconfig:
-  # false lets you mount your own kubeconfig instead (see extraVolumes /
-  # extraEnv). Everything below is ignored then.
+  # false lets the desktop profile mount your own kubeconfig instead (see
+  # extraVolumes / extraEnv). Everything below is ignored then.
   generate: true
   # The name the console shows in its cluster list.
   contextName: in-cluster
@@ -102,9 +137,10 @@ serviceAccount:
 # subjectaccessreviews, so the console can check each person's rights before
 # acting, rather than acting with its own. It asks; it grants nothing.
 #
-# Nothing here is cluster-admin, and the three dangerous capabilities are off:
-# writing, exec, and the kubelet proxy. Turn one on only when you know that
-# everybody with the console's password gets it.
+# Nothing here is cluster-admin, and the dangerous capabilities are off:
+# writing, exec, the kubelet proxy and the service proxy. Turn one on only when
+# you know that everybody who can sign in gets it - with single sign-on, up to
+# what their own RoleBindings allow; with the shared password, all of it.
 rbac:
   create: true
 
@@ -133,7 +169,10 @@ rbac:
   customResources: false
 
   # create/update/patch/delete on workloads and config. Off. With this on, the
-  # console's edit and delete buttons work - for everyone who can sign in.
+  # console's edit and delete buttons work, and so do its actions: restart,
+  # scale, suspend and resume, trigger a CronJob, cordon, uncordon and drain a
+  # node (`patch` on nodes), and evict a pod (`create` on pods/eviction) - for
+  # everyone who can sign in, up to their own RoleBindings with single sign-on.
   #
   # **Treat it as cluster-admin.** It grants `create` on pods, Secrets and
   # ServiceAccounts in every namespace. A pod can run as any ServiceAccount in
@@ -159,6 +198,15 @@ rbac:
   # only answers where metrics-server is installed.
   metrics: true
 
+  # services/proxy, `get` only: the console reaches Prometheus through the API
+  # server's service proxy (internal/metrics/prom.go), for its graphs. Off. It
+  # is a proxy to **every Service in the cluster**, for GET requests -
+  # including any HTTP endpoint that trusts the cluster network instead of
+  # asking for credentials. Without it the console falls back to a
+  # port-forward to the Prometheus pod, which needs rbac.exec, and with neither
+  # it reports that it cannot reach Prometheus.
+  prometheusProxy: false
+
 # ---------------------------------------------------------------------------
 # The front door
 # ---------------------------------------------------------------------------
@@ -175,8 +223,11 @@ rbac:
 # whatever the rbac switches say. Off is still available and is now the
 # decision somebody types.
 #
-# It makes the console smaller; it does not make it multi-user. A deployment
-# shared between people still shares one password and one session.
+# It is also what makes the console read this pod's own ServiceAccount, rather
+# than a kubeconfig the chart would have to write for it (see kubeconfig).
+#
+# It makes the console smaller; it does not change who the cluster sees. Every
+# request is still this pod's ServiceAccount's, whoever signed in.
 serverProfile: true
 
 auth:
@@ -294,13 +345,21 @@ auth:
     # console - and set usernameClaim to the API server's claim too, since
     # its --oidc-username-claim defaults to `sub` and the console's to `email`.
     # Quote the value in a values file: an unquoted `-` or `oidc:` does not
-    # parse, and anything after ` #` is a comment. A prefix that would start
-    # with `system:` is refused by the console at start-up. Needs a console
-    # image that knows KT_OIDC_USERNAME_PREFIX; an older one ignores it.
+    # parse, and anything after ` #` is a comment. Needs a console image that
+    # knows KT_OIDC_USERNAME_PREFIX; an older one ignores it.
+    #
+    # **A prefix that would start with `system:` is refused at render**, as the
+    # console refuses it at start-up - Kubernetes' own users live there.
+    # Compared trimmed and case-insensitively, and as it will be applied: `-`
+    # is never refused, and unset is refused only if the issuer itself starts
+    # with `system:` and the claim is not `email`.
     usernamePrefix: ""
 
     # Prepended to every group before the console asserts it, like
     # kube-apiserver's --oidc-groups-prefix. A name, never a permission.
+    # **A prefix starting with `system:` is refused at render**, trimmed and
+    # case-insensitively, as the console refuses it: every group would be one
+    # of Kubernetes' own, `system:masters` among them.
     groupsPrefix: ""
 
     # How long a single sign-on session lives from the sign-in. Empty is the
@@ -337,9 +396,12 @@ readonlyClusters: ""
 # whole diagnosis, which is worth it on a first install.
 diagnostics: ""
 
-# Claude Code ships in the image and the console offers a control for it. In a
-# pod reachable by more than one person this runs on one subscription, as one
-# identity, with the pod's own credentials. Read-only by default.
+# The desktop profile only (serverProfile: false): Claude Code ships in the
+# image, and that profile offers a control for it. The server profile
+# registers no assistant at all, so these are not read there. Under the desktop
+# profile in a pod reachable by more than one person it runs on one
+# subscription, as one identity, with the pod's own credentials. Read-only by
+# default.
 claude:
   readOnly: true
   permissionMode: ""
@@ -413,6 +475,26 @@ resources:
     # runaway is worth killing.
     memory: 1Gi
 
+# GOMEMLIMIT, as a share of resources.limits.memory: the Go runtime's soft
+# limit, at which its garbage collector starts working harder rather than
+# letting the heap grow into the kernel's OOM kill. Not 100, because the heap is
+# not the whole process. 0 leaves GOMEMLIMIT unset; so does setting it yourself
+# in extraEnv.
+goMemLimitPercent: 90
+
+# Shutdown, in order: the pod is removed from the Service's endpoints and, at
+# the same moment, preStop runs. preStopSleepSeconds is a pause long enough for
+# that removal to reach kube-proxy and the ingress, so requests still routed
+# here find a server. Then SIGTERM: the console stops accepting connections
+# and gives in-flight requests five seconds. Long-lived connections - a log
+# stream, a pod shell - are cut at that point, and the browser has to open
+# them again, on another replica or on this one's successor.
+#
+# terminationGracePeriodSeconds covers both, with room to spare; the chart
+# refuses one shorter than the pause plus those five seconds.
+preStopSleepSeconds: 5
+terminationGracePeriodSeconds: 15
+
 # uid 100 / gid 101 are what the image creates and what /var/lib/kubetower is
 # chowned to. Changing them without changing the image breaks every write.
 podSecurityContext:
@@ -428,26 +510,53 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  # false, and honestly: the process writes to $HOME (the Claude config
-  # directory and the AWS CLI cache) and to /tmp/kubetower. Setting it true
-  # needs an emptyDir on each of those, which this chart does not yet do.
-  readOnlyRootFilesystem: false
+  # The process writes to three places, and each is a volume: the state
+  # directory, $HOME and /tmp (the Deployment says what goes in each). Nothing
+  # else on the root filesystem needs writing, so none of it is writable.
+  readOnlyRootFilesystem: true
+
+# Three probes, two meanings.
+#
+# /healthz answers while the console is serving - its own process, its own
+# router - and nothing else. Liveness uses it: a console that stops answering
+# is restarted, and one whose clusters are unreachable is not, because the
+# health page explaining that is the screen somebody opens at that moment.
+#
+# Readiness uses it too, by default, and that is a decision. /readyz also
+# degrades when no cluster answers - and under the server profile there is one
+# cluster, the API server this pod runs in. A blip there would make every
+# replica unready at once and empty the Service, so the ingress would answer
+# 503 instead of the console's own page saying what is wrong, and no other
+# replica could have served the request better. With your own kubeconfig of
+# several clusters (serverProfile: false, kubeconfig.generate: false), /readyz
+# is the meaningful readiness: set readinessProbe.httpGet.path to it.
+#
+# The startup probe holds the other two off until the first answer, for as
+# long as a slow start takes (30 x 2 s), rather than an initial delay that is
+# either too short or wasted.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  timeoutSeconds: 3
+  failureThreshold: 30
 
 livenessProbe:
   httpGet:
     path: /healthz
     port: http
-  initialDelaySeconds: 10
   periodSeconds: 30
+  timeoutSeconds: 3
+  failureThreshold: 3
 
-# /readyz degrades when the kubeconfig stops reading or no context answers, so
-# it is a real readiness signal rather than "the process is up".
 readinessProbe:
   httpGet:
-    path: /readyz
+    path: /healthz
     port: http
-  initialDelaySeconds: 5
   periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
 
 podAnnotations: {}
 podLabels: {}
@@ -471,7 +580,7 @@ extraVolumeMounts: []
 #
 # **Its password is a Secret like any other**, so with the default
 # rbac.readSecrets anybody who signs in can read it from the Secrets page and,
-# with no NetworkPolicy in the way, connect to Valkey. What they find there is
+# unless networkPolicy is enabled and enforced, connect to Valkey. What they find there is
 # sealed or hashed; but the session key sits in this release's own Secret,
 # which the same read reaches (see rbac.readSecrets). The Valkey password adds
 # the power to delete every record - signing everybody out and forgetting which
@@ -534,3 +643,24 @@ valkey:
 
   nodeSelector: {}
   tolerations: []
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy - optional
+# ---------------------------------------------------------------------------
+#
+# Off by default. On, it renders ingress policies only (templates/
+# networkpolicy.yaml): the console's pods admit their one port, and with several
+# replicas Valkey admits its port from this release's consoles and nothing
+# else. No egress policy: the console's legitimate destinations - the API
+# server, the identity provider, Prometheus, whatever a port-forward points at
+# - depend on the cluster. It does nothing on a network plugin that does not
+# enforce NetworkPolicy.
+networkPolicy:
+  enabled: false
+  # Who may reach the console's port: NetworkPolicyPeer entries, as in a
+  # NetworkPolicy's `from`. Empty means from anywhere - your ingress
+  # controller's namespace is the usual narrowing:
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         kubernetes.io/metadata.name: ingress-nginx
+  consoleFrom: []

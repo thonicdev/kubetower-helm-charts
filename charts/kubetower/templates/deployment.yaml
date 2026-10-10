@@ -30,7 +30,7 @@ spec:
         # process reads both once, at start, so a changed Secret with an
         # unchanged Deployment would leave the old password and the old
         # session key running - and rotating the key would revoke nothing.
-        {{- if .Values.kubeconfig.generate }}
+        {{- if include "kubetower.kubeconfigGenerated" . }}
         checksum/kubeconfig: {{ include (print $.Template.BasePath "/configmap-kubeconfig.yaml") . | sha256sum }}
         {{- end }}
         # Over the Secret this chart writes. A Secret named by
@@ -65,6 +65,12 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Long enough for the preStop pause and the console's own shutdown -
+      # templates/_helpers.tpl refuses a value that is not.
+      terminationGracePeriodSeconds: {{ include "kubetower.terminationGracePeriod" . }}
+      {{- with include "kubetower.topologySpread" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
       containers:
         - name: kubetower
           image: {{ include "kubetower.image" . | quote }}
@@ -109,9 +115,14 @@ spec:
             # will forget at the next start.
             - name: KT_STATE_PERSISTENT
               value: {{ .Values.persistence.enabled | quote }}
-            {{- if .Values.kubeconfig.generate }}
+            {{- if include "kubetower.kubeconfigGenerated" . }}
             - name: KUBECONFIG
               value: /etc/kubetower/kubeconfig/config
+            {{- else if .Values.serverProfile }}
+            # No KUBECONFIG: under --incluster the console reads this pod's
+            # own ServiceAccount, the way client-go's InClusterConfig does,
+            # and does not read KUBECONFIG at all. So no kubeconfig is
+            # rendered for it either.
             {{- else }}
             # kubeconfig.generate is false, so KUBECONFIG is not set here: it
             # is yours to set through extraEnv, beside the extraVolumes that
@@ -201,6 +212,15 @@ spec:
               value: {{ .Values.claude.permissionMode | quote }}
             {{- end }}
             {{- include "kubetower.valkeyEnv" . | nindent 12 }}
+            {{- with include "kubetower.goMemLimit" . }}
+            # The Go runtime's soft memory limit, a share of the container's
+            # (goMemLimitPercent), so the garbage collector works harder as
+            # the heap nears the limit instead of the kernel killing the
+            # process at it. In bytes; absent when there is no memory limit or
+            # when extraEnv sets GOMEMLIMIT itself.
+            - name: GOMEMLIMIT
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -211,10 +231,24 @@ spec:
             # that will not start.
             - secretRef:
                 name: {{ include "kubetower.secretName" . }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- if gt (int .Values.preStopSleepSeconds) 0 }}
+          # A pause before SIGTERM, so that the endpoint's removal reaches the
+          # Service and the ingress before the listener closes, rather than
+          # racing it: requests routed in that window still find a server.
+          # `sleep` is the image's own (Alpine).
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", {{ .Values.preStopSleepSeconds | int | toString | quote }}]
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
@@ -222,7 +256,7 @@ spec:
           volumeMounts:
             - name: state
               mountPath: /var/lib/kubetower
-            {{- if .Values.kubeconfig.generate }}
+            {{- if include "kubetower.kubeconfigGenerated" . }}
             - name: kubeconfig
               mountPath: /etc/kubetower/kubeconfig
               readOnly: true
@@ -230,15 +264,22 @@ spec:
             - name: serviceaccount-token
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
-            # $HOME is written to: the Claude config directory and the AWS
-            # CLI's cache both live there, and the image creates them owned by
-            # uid 100. An emptyDir keeps that true without needing the whole
-            # root filesystem writable for it.
+            # The root filesystem is read-only (securityContext), so every
+            # directory the console writes is a volume. Besides the state
+            # directory above, it writes two:
+            #
+            #   $HOME  the CLI caches its tools keep (~/.kube, ~/.aws/cli) and,
+            #          under the desktop profile, the assistant's configuration
+            #   /tmp   os.TempDir(): the terminal's work root
+            #          (/tmp/kubetower-<uid>, its sessions and its read-only
+            #          shims) and the per-context AWS homes (/tmp/kubetower-aws)
+            #
+            # Both start empty at every start, which is what each of them is
+            # for: nothing there is meant to outlive the process.
             - name: home
-              mountPath: /home/kubetower/.claude
-              subPath: claude
+              mountPath: /home/kubetower
             - name: tmp
-              mountPath: /tmp/kubetower
+              mountPath: /tmp
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -254,7 +295,7 @@ spec:
           # with it: check-persistence.yaml refuses that combination.
           emptyDir: {}
           {{- end }}
-        {{- if .Values.kubeconfig.generate }}
+        {{- if include "kubetower.kubeconfigGenerated" . }}
         - name: kubeconfig
           configMap:
             name: {{ include "kubetower.fullname" . }}-kubeconfig

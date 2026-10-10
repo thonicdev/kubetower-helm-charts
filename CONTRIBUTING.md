@@ -38,8 +38,10 @@ advance is the only reason this file leads with it.
 
 - **Conventional Commits**, on every commit and on the pull-request title. The
   allowed scopes are in `commitlint.config.js`.
-- **Run the checks**: `helm lint ./charts/kubetower`,
-  `python test/rbac-check.py --self-test`, `python test/checksum-check.py`
+- **Run the checks**: `helm lint ./charts/kubetower --set image.tag=0.0.0-ci`
+  (the chart refuses to render without a tag while its appVersion is a
+  placeholder), `python test/rbac-check.py --self-test`,
+  `python test/console-needs-check.py --self-test`, `python test/checksum-check.py`
   `bash test/public-check.sh --self-test && bash test/public-check.sh tree`
   and `bash test/attribution-check.sh --self-test`. The last two also read the
   pull request's title and description, because the squash merge makes the
