@@ -304,7 +304,10 @@ jobs:
           assert grace >= pause + 5, ("grace", grace, "pause", pause)
           for probe in ["startupProbe", "livenessProbe", "readinessProbe"]:
               assert c[probe].get("timeoutSeconds"), (probe, "has no timeout")
-          assert c["readinessProbe"]["httpGet"]["path"] == "/healthz", c["readinessProbe"]
+          # Readiness is the judgement of the console itself (/readyz); liveness only
+          # asks whether it is serving (/healthz).
+          assert c["readinessProbe"]["httpGet"]["path"] == "/readyz", c["readinessProbe"]
+          assert c["livenessProbe"]["httpGet"]["path"] == "/healthz", c["livenessProbe"]
           env = {e["name"]: e.get("value") for e in c["env"]}
           assert env.get("GOMEMLIMIT") == str(1024 ** 3 * 90 // 100), env.get("GOMEMLIMIT")
           print("preStop", pause, "s, grace", grace, "s, GOMEMLIMIT", env["GOMEMLIMIT"])'

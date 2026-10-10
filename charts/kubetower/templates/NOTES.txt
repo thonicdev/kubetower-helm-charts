@@ -163,9 +163,10 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 {{- end }}
    kubectl --context <your-context> -n {{ .Release.Namespace }} logs deploy/{{ include "kubetower.fullname" . }}
 
-   Readiness is {{ .Values.readinessProbe.httpGet.path | default "set in your values" }}.{{ if eq (toString .Values.readinessProbe.httpGet.path) "/healthz" }} It follows the console, not the API
-   server: when the cluster does not answer, the pod stays in the Service and
-   its health page says so, instead of the Service emptying.{{ end }}
+   Readiness is {{ .Values.readinessProbe.httpGet.path | default "set in your values" }}.{{ if eq (toString .Values.readinessProbe.httpGet.path) "/readyz" }} It is the console's own judgement: a
+   replica goes unready when its clusters stop answering (here, the API server)
+   or, in console versions that check it, when its audit log can no longer be
+   written - and leaves the Service until it recovers.{{ end }}
 
 5. BEFORE YOU SHARE THE URL WITH ANYBODY
 

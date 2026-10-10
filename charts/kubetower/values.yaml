@@ -544,14 +544,14 @@ scratchSizeLimits:
 # is restarted, and one whose clusters are unreachable is not, because the
 # health page explaining that is the screen somebody opens at that moment.
 #
-# Readiness uses it too, by default, and that is a decision. /readyz also
-# degrades when no cluster answers - and under the server profile there is one
-# cluster, the API server this pod runs in. A blip there would make every
-# replica unready at once and empty the Service, so the ingress would answer
-# 503 instead of the console's own page saying what is wrong, and no other
-# replica could have served the request better. With your own kubeconfig of
-# several clusters (serverProfile: false, kubeconfig.generate: false), /readyz
-# is the meaningful readiness: set readinessProbe.httpGet.path to it.
+# Readiness uses /readyz, which is the console's own judgement of whether
+# this replica can do its job: whether its clusters answer - under the server
+# profile, the API server this pod runs in - and, in console versions that
+# check it, whether its audit log can still be written. A replica that cannot
+# record what people do leaves the Service rather than refusing every action
+# while it stays in it. The chart does not second-guess that judgement: if a
+# brief API-server error should not make a replica unready, that is for the
+# console's /readyz to decide, not for the probe to work around.
 #
 # The startup probe holds the other two off until the first answer, for as
 # long as a slow start takes (30 x 2 s), rather than an initial delay that is
@@ -574,7 +574,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /healthz
+    path: /readyz
     port: http
   periodSeconds: 10
   timeoutSeconds: 3

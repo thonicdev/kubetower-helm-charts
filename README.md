@@ -210,12 +210,15 @@ yours).
   `terminationGracePeriodSeconds` (15) covers both, and the chart refuses one
   that does not. A log stream or a pod shell open at that moment is cut, and
   the browser has to open it again.
-- **Probes.** A startup probe, then liveness and readiness on `/healthz`, each
-  with a timeout. Readiness deliberately does not use `/readyz` by default:
-  under the server profile the one cluster is the API server the pod runs in,
-  and `/readyz` following it would empty the Service on every replica at once,
-  hiding the console's own health page at the moment it is needed. With your
-  own kubeconfig of several clusters, `/readyz` is the better readiness.
+- **Probes.** A startup probe, liveness on `/healthz` and readiness on
+  `/readyz`, each with a timeout. Liveness asks only whether the console is
+  serving, so a console whose clusters are unreachable is not restarted.
+  Readiness follows the console's own judgement: whether its clusters answer -
+  under the server profile, the API server the pod runs in - and, in console
+  versions that check it, whether its audit log can still be written. A replica
+  that cannot record what people do leaves the Service. Whether a brief
+  API-server error should count is the console's decision, made in `/readyz`;
+  the chart does not work around it.
 - **Memory.** `GOMEMLIMIT` is set to `goMemLimitPercent` (90) of the memory
   limit, so the Go runtime collects harder near the limit instead of being
   killed at it.
