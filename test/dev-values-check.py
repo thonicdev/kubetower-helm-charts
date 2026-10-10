@@ -15,11 +15,15 @@ would be given is compared with what the fixture serves:
 - `groups` is asked for, without which Dex sends no groups claim;
 - the shared password is kept beside single sign-on, with a hash, so there is
   a way in when Dex is not running;
-- the server profile, and a local image that is never pulled.
+- the server profile, and a local image that is never pulled;
+- the port-forward NOTES prints is the port the redirect sends the browser
+  back to, or a sign-in ends on a closed port.
 """
 
 import base64
+import re
 import subprocess
+import urllib.parse
 import sys
 
 import yaml
@@ -47,6 +51,19 @@ def rendered():
     return container, env, secret
 
 
+def notes_port():
+    """The local port NOTES tells you to forward, as `helm install` prints it."""
+    out = subprocess.run(
+        ["helm", "install", "kubetower", CHART, "--namespace", "kubetower", "--dry-run=client", "-f", VALUES],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"helm install --dry-run=client with {VALUES} failed:\n{out.stderr}")
+    m = re.search(r"port-forward svc/\S+ (\d+):", out.stdout)
+    if not m:
+        raise SystemExit("NOTES prints no port-forward line - the check has nothing to compare")
+    return m.group(1)
+
+
 def dex():
     with open(FIXTURE, encoding="utf-8") as f:
         docs = [d for d in yaml.safe_load_all(f) if d]
@@ -54,8 +71,11 @@ def dex():
     return yaml.safe_load(config)
 
 
-def complaints(container, env, secret, config):
+def complaints(container, env, secret, config, port):
     found = []
+    redirect = urllib.parse.urlparse(env.get("KT_OIDC_REDIRECT_URL") or "")
+    if str(redirect.port) != port:
+        found.append(f"NOTES forwards local port {port}, and the redirect returns the browser to {redirect.port}")
     if env.get("KT_OIDC_ISSUER") != config["issuer"]:
         found.append(f"the issuer is {env.get('KT_OIDC_ISSUER')!r}, and the fixture's is {config['issuer']!r}")
     clients = {c["id"]: c for c in config.get("staticClients") or []}
@@ -81,7 +101,7 @@ def complaints(container, env, secret, config):
     return found
 
 
-def self_test(container, env, secret, config):
+def self_test(container, env, secret, config, port):
     """Prove each comparison can say no, on the real render with one thing changed."""
     probes = [
         ("issuer", lambda e, s, c, k: c.update(issuer=c["issuer"] + "/")),
@@ -93,11 +113,13 @@ def self_test(container, env, secret, config):
         ("password hash", lambda e, s, c, k: s.pop("KT_PASSWORD_HASH", None)),
         ("profile", lambda e, s, c, k: k.update(args=[a for a in k.get("args", []) if a != "--incluster"])),
         ("image", lambda e, s, c, k: k.update(imagePullPolicy="IfNotPresent")),
+        ("notes port", lambda e, s, c, k: None),
     ]
     for label, change in probes:
         e, s, c, k = dict(env), dict(secret), yaml.safe_load(yaml.safe_dump(config)), dict(container)
+        p = port if label != "notes port" else "5823"
         change(e, s, c, k)
-        if not complaints(k, e, s, c):
+        if not complaints(k, e, s, c, p):
             raise SystemExit(f"the check accepted development values with the {label} changed")
     print(f"ok    self-test - {len(probes)} single changes refused")
     print()
@@ -106,9 +128,10 @@ def self_test(container, env, secret, config):
 if __name__ == "__main__":
     container, env, secret = rendered()
     config = dex()
+    port = notes_port()
     if "--self-test" in sys.argv:
-        self_test(container, env, secret, config)
-    found = complaints(container, env, secret, config)
+        self_test(container, env, secret, config, port)
+    found = complaints(container, env, secret, config, port)
     print(f"{'FAIL' if found else 'ok  '}  {VALUES} agrees with {FIXTURE}")
     for line in found:
         print(f"        {line}")

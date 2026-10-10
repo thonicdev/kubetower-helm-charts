@@ -30,10 +30,20 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 {{- end }}
 
 1. REACH IT
+{{- /* The local port is the one single sign-on sends the browser back to, when
+     the redirect is a loopback address: forwarding any other port lands the
+     browser on a closed one after it signs in. */}}
+{{- $local := "5823" }}
+{{- with .Values.auth.oidc.redirectURL }}
+{{- $loopback := regexFind "^http://(127[.]0[.]0[.]1|localhost):[0-9]+/" . }}
+{{- if $loopback }}
+{{- $local = regexReplaceAll "^http://[^:]+:([0-9]+)/$" $loopback "${1}" }}
+{{- end }}
+{{- end }}
 
-   kubectl --context <your-context> -n {{ .Release.Namespace }} port-forward svc/{{ include "kubetower.fullname" . }} 5823:{{ .Values.service.port }}
+   kubectl --context <your-context> -n {{ .Release.Namespace }} port-forward svc/{{ include "kubetower.fullname" . }} {{ $local }}:{{ .Values.service.port }}
 
-   Then open http://127.0.0.1:5823
+   Then open http://127.0.0.1:{{ $local }}
 {{- if .Values.ingress.enabled }}
 
    An Ingress is enabled on:
