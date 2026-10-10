@@ -67,7 +67,8 @@ echo "ANON:$(valkey-cli ping 2>&1 | tr -d '\n')"
 
 def rendered():
     out = subprocess.run(
-        ["helm", "template", "kubetower", CHART] + [a for s in SEVERAL for a in ("--set", s)],
+        ["helm", "template", "kubetower", CHART, "--set", "image.tag=0.0.0-check"]
+        + [a for s in SEVERAL for a in ("--set", s)],
         capture_output=True, check=True).stdout.decode()
     docs = [d for d in yaml.safe_load_all(out) if d]
     conf = next(d for d in docs if d["kind"] == "ConfigMap"

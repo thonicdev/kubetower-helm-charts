@@ -45,7 +45,9 @@ SEVERAL = [
 
 
 def render(sets, only=None):
-    cmd = ["helm", "template", "kubetower", CHART]
+    # The image tag is irrelevant here; without one the chart refuses to
+    # render while its appVersion is the placeholder.
+    cmd = ["helm", "template", "kubetower", CHART, "--set", "image.tag=0.0.0-check"]
     cmd += [arg for s in sets for arg in ("--set", s)]
     if only:
         cmd += ["--show-only", only]

@@ -50,6 +50,7 @@ NEVER = {"impersonate", "escalate", "bind"}
 EVERYTHING_ON = [
     "rbac.write=true", "rbac.exec=true", "rbac.nodeProxy=true",
     "rbac.customResources=true", "rbac.readSecrets=true", "rbac.metrics=true",
+    "rbac.prometheusProxy=true",
 ]
 
 
@@ -57,7 +58,10 @@ def rules(sets):
     """The ClusterRole's rules, as Helm renders them for these values."""
     out = subprocess.run(
         ["helm", "template", "kubetower", "./charts/kubetower",
-         "--show-only", "templates/rbac.yaml"]
+         "--show-only", "templates/rbac.yaml",
+         # Irrelevant to the role; without it the chart refuses to render
+         # while its appVersion is the placeholder.
+         "--set", "image.tag=0.0.0-check"]
         + [arg for s in sets for arg in ("--set", s)],
         capture_output=True, text=True, check=True).stdout
     for doc in yaml.safe_load_all(out):
