@@ -15,6 +15,7 @@ whole point of reading a chart.
 | Path | What |
 |---|---|
 | `charts/kubetower/` | The console in a pod |
+| `charts/kubetower/console-needs.yaml` | What the console asks the cluster for, request by request. The `ClusterRole` is rendered from it |
 | `test/oidc/` | A Dex fixture for developing single sign-on against. Not part of the chart |
 
 ## The one sentence that matters
@@ -252,9 +253,22 @@ false`.
 
 ### RBAC
 
-Read-only, cluster-wide, by default — derived from what the code reads, not from
-`cluster-admin` and not from the built-in `view` role, which excludes Secrets,
-which the Secrets page and the Helm release list both need.
+Read-only, cluster-wide, by default — rendered from what the console asks for,
+not from `cluster-admin` and not from the built-in `view` role, which excludes
+Secrets, which the Secrets page and the Helm release list both need.
+
+`charts/kubetower/console-needs.yaml` lists every request the console makes:
+its API group, resource and verbs, the switch below that grants it, and the
+file in [the console's source](https://github.com/thonicdev/kubetower) that
+makes it. `templates/rbac.yaml` writes that list out as rules and adds nothing,
+so a grant that is not a line there does not exist. That is why the role has no
+`watch` (the console polls), no `update` (every write is a merge patch, a
+create, a delete or an eviction), no `*/scale` or `*/status`, no `pods/attach`,
+and no `nodes/stats` or `nodes/metrics` (the kubelet's figures come through
+`nodes/proxy`). The one verb the console's own review does not name is `get`
+on `pods/exec` and `pods/portforward`: both open as a WebSocket, which is a GET
+the API server authorises as `get` - and, from Kubernetes 1.30, as `create`
+too.
 
 One rule is not read-only and is always there: `create` on
 `subjectaccessreviews`, which lets the console check each person's rights
@@ -285,15 +299,23 @@ session key and mint a session of their own.
 all it checks: it passes with every switch on, so a green run says nothing about
 whether the switches you chose are safe.
 
-`test/console-needs-check.py` checks the other direction: every request in
-`test/console-needs.yaml` - what the console asks the cluster for, each with
-the source file in the console's repository it comes from - is granted when
-its switch is on, and the off-by-default switches grant nothing when off. The
-list is kept by hand, so it catches a grant that goes missing, not a request
-the console starts making that nobody added to it.
+`test/console-needs-check.py` holds the role to the list: for each switch, and
+for every switch on and every switch off, the rendered role must grant each
+request whose switch is on and nothing else, and the defaults nothing behind an
+off-by-default switch.
 
-`charts/kubetower/templates/rbac.yaml` names the source file each rule exists
-for.
+`test/derive-needs.py` holds the list to the console: it reads the console's Go
+source at the commit the list names and fails when the source makes a request
+the list lacks, or the list names one the source never makes. Writes are the
+exception, by design: the editor reaches any kind the console lists, so the
+kinds `rbac.write` grants are this chart's choice, and the check only asks that
+each be a kind the console lists and a verb it writes with. CI runs it wherever
+the console's repository is readable from the workflow, and says NOT RUN where
+it is not. Locally, with the console checked out beside this repository:
+
+```bash
+python test/derive-needs.py --core ../kubetower
+```
 
 ## The server profile
 

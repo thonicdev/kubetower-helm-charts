@@ -10,7 +10,7 @@ description: >-
 type: application
 
 # The chart's own version. It is not the console's.
-version: 0.2.0
+version: 0.3.0
 
 # The console's version, and the default image tag: the console's release
 # workflow publishes ghcr.io/thonicdev/kubetower:<version> for each tag

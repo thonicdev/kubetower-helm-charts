@@ -41,7 +41,9 @@ advance is the only reason this file leads with it.
 - **Run the checks**: `helm lint ./charts/kubetower --set image.tag=0.0.0-ci`
   (the chart refuses to render without a tag while its appVersion is a
   placeholder), `python test/rbac-check.py --self-test`,
-  `python test/console-needs-check.py --self-test`, `python test/checksum-check.py`
+  `python test/console-needs-check.py --self-test`, `python test/checksum-check.py`,
+  `python test/derive-needs.py --self-test --core <a checkout of the console>`
+  when you change `charts/kubetower/console-needs.yaml`,
   `bash test/public-check.sh --self-test && bash test/public-check.sh tree`
   and `bash test/attribution-check.sh --self-test`. The last two also read the
   pull request's title and description, because the squash merge makes the

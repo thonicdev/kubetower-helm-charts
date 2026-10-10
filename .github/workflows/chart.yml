@@ -432,7 +432,7 @@ jobs:
           renders $oidc --set auth.oidc.issuer=system:idp
 
   rbac:
-    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants what the console asks for
+    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants exactly what the console asks for
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -442,14 +442,51 @@ jobs:
       # if it does not. A checker nobody has seen fail is a checker nobody knows
       # is connected.
       - run: python test/rbac-check.py --self-test
-      # The other direction: every request in test/console-needs.yaml - what
-      # the console asks the cluster for, with the source file of each - is
-      # granted when its switch is on, and nothing behind an off-by-default
-      # switch is granted by the defaults. A control the console offers and
-      # the role refuses answers 403 for every person, whatever their own
-      # RoleBindings say. --self-test first, for the reason above.
-      - name: the role grants what the console asks for
-        run: python test/console-needs-check.py --self-test
+      # The role is rendered from charts/kubetower/console-needs.yaml - what the
+      # console asks the cluster for, with the source file of each. For every
+      # combination of switches, the role must grant each request whose switch
+      # is on and nothing else: a control the role refuses answers 403 for
+      # every person, whatever their own RoleBindings say, and a grant nobody
+      # asks for is held by everybody who signs in. And the defaults grant
+      # nothing behind an off-by-default switch. --self-test first, for the
+      # reason above.
+      - name: the role grants exactly what the console asks for
+        run: |
+          set -o pipefail
+          python test/console-needs-check.py --self-test
+      # And the list against the console's own source, at the commit the list
+      # names: every request the source makes is in the list, and every line of
+      # the list is a request it makes. Fetched by that commit, so this answers
+      # for the list as committed and a change in the console does not turn an
+      # unrelated pull request red; moving the commit is a change to the list.
+      #
+      # The console's repository must be readable from here for this to run.
+      # Where it is not, the step says NOT RUN - in the log, as a warning and in
+      # the run's summary - rather than failing for something no change here
+      # could fix, or passing as if it had compared anything. Locally, with a
+      # checkout of the console beside this one:
+      #   python test/derive-needs.py --core ../kubetower
+      - name: the list is what the console's source asks for
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -o pipefail
+          read -r url commit < <(python -c '
+          import yaml
+          d = yaml.safe_load(open("charts/kubetower/console-needs.yaml"))["derivedFrom"]
+          print(d["repository"], d["commit"])' | tr -d '\r')
+          [ -n "$url" ] && [ -n "$commit" ] || { echo "console-needs.yaml names no derivedFrom repository and commit"; exit 1; }
+          # Bounded: an unreadable repository must answer, not hang the job.
+          if ! timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1; then
+            sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
+            echo "::warning::NOT RUN: $url is not readable from this workflow, so console-needs.yaml was not compared with the console's source at $commit"
+            echo "**Derivation NOT RUN**: $url is not readable from this workflow; console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git init -q "$RUNNER_TEMP/core"
+          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
+          git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
+          python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
 
   persistence:
     name: the console is told whether its state survives, and a drawn password needs it
