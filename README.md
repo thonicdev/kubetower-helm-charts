@@ -381,6 +381,21 @@ single-page handler — **so a `200` there is the removal working, not failing.*
 And the control that makes the rest mean anything: `/api/c/<cluster>/ws/exec`
 answers `400 namespace and pod must be Kubernetes names`, from its own handler.
 The 404s are the router holding nothing, not the surface being down. `kubectl exec` is then the only shell into the pod, bounded by
+**It is a best-effort check, not a proof.** It reads Go as text, with
+patterns. It refuses every client call, raw path, dynamic call and watch it
+cannot classify, rather than skipping it, and its self-test feeds it lines a
+change could add and requires each to fail. But a request hidden behind
+indirection it cannot follow can still pass. The role is held to the list
+exactly; the list is held to the console only as well as that scan reads it.
+
+**A known limit: owner links to kinds the console does not list.** The drawer
+follows an object's owner reference to any kind the cluster serves, and reads
+it with `get`. The role grants `get` only on the kinds the console lists, so a
+link to any other kind answers 403. The kinds 0.2.0 granted and 0.3.0 does not
+(`controllerrevisions`, `podtemplates`, `volumeattachments`, the CSI kinds) own
+nothing in practice, so this is a difference on paper rather than one you
+should meet.
+
 your RBAC rather than by the console's own switches.
 
 **Turning it on does not change who the cluster sees.** It makes the console

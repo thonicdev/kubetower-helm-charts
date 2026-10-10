@@ -16,7 +16,9 @@
 #
 #   test/derive-needs.py         reads the console's source and fails when it
 #                                makes a request missing here, or when a line
-#                                here is a request it never makes
+#                                here is a request it never makes - a
+#                                best-effort scan of Go as text; its header
+#                                says what it can miss
 #   test/console-needs-check.py  renders the role with each switch and fails
 #                                when it grants a line less or a grant more
 #   test/rbac-check.py           refuses escalation verbs and stray wildcards
@@ -48,7 +50,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: 8cfdd846a8d10aae4774450a340945608e3ad0a8
+  commit: 70b0ec76f904eaa3440d717390310fa39d8b27e2
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
