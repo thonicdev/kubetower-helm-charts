@@ -1,0 +1,103 @@
+# What the console asks the cluster for, request by request, and the switch
+# in values.yaml that is meant to grant it. test/console-needs-check.py renders
+# the chart's ClusterRole and fails when a switch that should grant one of
+# these does not - or when an off-by-default switch grants one while off.
+#
+# Read from the console's source in thonicdev/kubetower: `source` is the file
+# that makes the request, or that decides how it is reviewed. Each verb is the
+# request's own RBAC verb: a merge patch is `patch`, an eviction is `create`
+# on pods/eviction, an exec or a port-forward is `create` on its subresource,
+# a GET through the service proxy is `get` on services/proxy.
+#
+# **Kept by hand.** It catches a grant that goes missing from the role. It
+# does not catch a request the console starts making that nobody wrote here;
+# deriving this file from the console's source is what would.
+#
+# `group` is the API group, "" for the core group. Reads ask for get and list;
+# the role also grants watch, which nothing here requires.
+
+needs:
+  # Asked before every write, exec and forward, about the person signed in.
+  - {switch: always, group: authorization.k8s.io, resource: subjectaccessreviews, verbs: [create], source: "internal/access/kube.go"}
+
+  # The list pages (one per kind, internal/resources/kinds.go and fetch.go),
+  # and the drawer's get of one object (internal/detail).
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
+  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: events, verbs: [get, list], source: "internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumes, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: replicationcontrollers, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: serviceaccounts, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: resourcequotas, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: limitranges, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: "", resource: configmaps, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: apps, resource: deployments, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: apps, resource: daemonsets, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: apps, resource: replicasets, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: batch, resource: jobs, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: batch, resource: cronjobs, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: ingresses, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: ingressclasses, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: networkpolicies, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: discovery.k8s.io, resource: endpointslices, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: autoscaling, resource: horizontalpodautoscalers, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: policy, resource: poddisruptionbudgets, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: scheduling.k8s.io, resource: priorityclasses, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: node.k8s.io, resource: runtimeclasses, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: coordination.k8s.io, resource: leases, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: admissionregistration.k8s.io, resource: mutatingwebhookconfigurations, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: admissionregistration.k8s.io, resource: validatingwebhookconfigurations, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: roles, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterroles, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: rolebindings, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterrolebindings, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: storage.k8s.io, resource: storageclasses, verbs: [get, list], source: "internal/resources/fetch.go"}
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [get, list], source: "internal/customresources/customresources.go"}
+
+  # The Secrets page and the Helm release list, which is a list of Secrets.
+  - {switch: rbac.readSecrets, group: "", resource: secrets, verbs: [get, list], source: "internal/helm/helm.go"}
+
+  # The CPU and memory columns.
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], source: "internal/overview/metrics.go"}
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: nodes, verbs: [list], source: "internal/metrics/usage.go"}
+
+  # Every custom resource, through a wildcard; checked on a made-up kind.
+  - {switch: rbac.customResources, group: example.com, resource: widgets, verbs: [get, list], source: "internal/customresources/customresources.go"}
+
+  # Writes. Every one leaves through internal/edit (door.go): a merge patch,
+  # a create, a delete or an eviction, reviewed first.
+  - {switch: rbac.write, group: "", resource: nodes, verbs: [patch], source: "internal/actions/needs.go (cordon, uncordon, drain)"}
+  - {switch: rbac.write, group: "", resource: pods/eviction, verbs: [create], source: "internal/actions/needs.go (evict, drain)"}
+  - {switch: rbac.write, group: "", resource: pods, verbs: [create, patch, delete], source: "internal/actions/needs.go (delete, restart of a pod); internal/edit"}
+  - {switch: rbac.write, group: "", resource: replicationcontrollers, verbs: [patch], source: "internal/actions/actions.go (scale)"}
+  - {switch: rbac.write, group: "", resource: services, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: configmaps, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: secrets, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: persistentvolumeclaims, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: serviceaccounts, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: apps, resource: deployments, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart, scale); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: statefulsets, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart, scale); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: daemonsets, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: replicasets, verbs: [create, patch, delete], source: "internal/actions/actions.go (scale); internal/edit"}
+  - {switch: rbac.write, group: batch, resource: jobs, verbs: [create, patch, delete], source: "internal/actions/trigger.go (trigger); internal/edit"}
+  - {switch: rbac.write, group: batch, resource: cronjobs, verbs: [create, patch, delete], source: "internal/actions/needs.go (suspend, resume); internal/edit"}
+  - {switch: rbac.write, group: networking.k8s.io, resource: ingresses, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: networking.k8s.io, resource: networkpolicies, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: autoscaling, resource: horizontalpodautoscalers, verbs: [create, patch, delete], source: "internal/edit"}
+
+  # A shell in a pod, and a port-forward - the terminal's, and the metrics
+  # layer's fallback route to Prometheus.
+  - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create], source: "internal/terminal/exec.go"}
+  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create], source: "internal/forward/forward.go; internal/metrics/tunnel.go"}
+
+  # Prometheus through the API server's service proxy.
+  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], source: "internal/metrics/prom.go"}
+
+  # Per-node usage from the kubelet.
+  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], source: "internal/kubeletstats/kubeletstats.go"}

@@ -26,25 +26,28 @@ jobs:
       - uses: azure/setup-helm@v4
 
       # The defaults are what most people install, so they are linted first and
-      # on their own - a failure here is a failure for everybody.
+      # on their own - a failure here is a failure for everybody. With an image
+      # tag, here and below: while the chart's appVersion is the 0.0.0-dev
+      # placeholder, a render without one is refused (asserted further down).
       - name: Lint the defaults
-        run: helm lint ./charts/kubetower
+        run: helm lint ./charts/kubetower --set image.tag=0.0.0-ci
 
       # And every dangerous toggle on, because a template that only renders in
       # its default shape has whole branches nothing has ever parsed.
       - name: Lint with every toggle on
         run: |
-          helm lint ./charts/kubetower \
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci \
             --set rbac.write=true --set rbac.exec=true --set rbac.nodeProxy=true \
             --set rbac.customResources=true --set rbac.readSecrets=true \
-            --set rbac.metrics=true --set serverProfile=true \
-            --set ingress.enabled=true --set ingress.hosts[0].host=example.test
+            --set rbac.metrics=true --set rbac.prometheusProxy=true --set serverProfile=true \
+            --set ingress.enabled=true --set ingress.hosts[0].host=example.test \
+            --set networkPolicy.enabled=true
 
       # Single sign-on on, with every optional value set, because its whole
       # block is behind `if .issuer` and nothing else renders it.
       - name: Lint with single sign-on configured
         run: |
-          helm lint ./charts/kubetower \
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci \
             --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
             --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
             --set auth.oidc.clientSecret.existingSecret=kubetower-oidc \
@@ -66,7 +69,7 @@ jobs:
           set -o pipefail
           oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
           prefix() {
-            helm template kubetower ./charts/kubetower $oidc "$@" | python -c '
+            helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci $oidc "$@" | python -c '
           import sys, yaml
           env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
                  for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -88,7 +91,7 @@ jobs:
       # that produces invalid YAML. This is the parse.
       - name: The rendered manifests are valid YAML
         run: |
-          helm template kubetower ./charts/kubetower --set serverProfile=true \
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set serverProfile=true \
             | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
 
       # Several replicas: the Valkey StatefulSet, its Service and Secret, and
@@ -96,10 +99,10 @@ jobs:
       # `replicaCount > 1`, so nothing above renders a line of it.
       - name: Several replicas render, and parse
         run: |
-          helm lint ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
             --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
             --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback
-          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
               --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
               --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
             | python -c '
@@ -123,7 +126,7 @@ jobs:
           oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
           refused() {
             want="$1"; shift
-            if out=$(helm template kubetower ./charts/kubetower "$@" 2>&1); then
+            if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci "$@" 2>&1); then
               echo "NOT REFUSED: $*"; exit 1
             fi
             echo "$out" | grep -q "$want" || { echo "refused without naming '$want': $out"; exit 1; }
@@ -137,8 +140,8 @@ jobs:
             --set valkey.existingSecret=mine --set valkey.existingSecretKey= $oidc
           refused "read by nothing" --set valkey.existingSecret=mine
           # The control: the same values made coherent render.
-          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
-          helm template kubetower ./charts/kubetower --set replicaCount=2 --set persistence.enabled=false \
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
             --set auth.passwordHash='$2a$12$abcdefghijklmnopqrstuv' > /dev/null
           echo "the coherent configurations render"
 
@@ -159,7 +162,7 @@ jobs:
       # own, so a short auth.sessionSecret would look fixed and be random.
       - name: A session key the console would ignore is refused
         run: |
-          if helm template kubetower ./charts/kubetower --set auth.sessionSecret=short > /dev/null 2> refused.txt; then
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.sessionSecret=short > /dev/null 2> refused.txt; then
             echo "::error::a five-character session key was accepted"
             exit 1
           fi
@@ -171,7 +174,7 @@ jobs:
       # the check above. values.schema.json refuses it before rendering.
       - name: The session key's memo cannot be set from outside
         run: |
-          if helm template kubetower ./charts/kubetower --set auth._drawnSessionSecret=short > /dev/null 2> refused.txt; then
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth._drawnSessionSecret=short > /dev/null 2> refused.txt; then
             echo "::error::a session key set through the render's memo was accepted"
             exit 1
           fi
@@ -182,14 +185,254 @@ jobs:
       # with one of the user's choosing, an empty one included.
       - name: The Valkey password's memo cannot be set from outside
         run: |
-          if helm template kubetower ./charts/kubetower --set valkey._drawnPassword=x > /dev/null 2> refused.txt; then
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set valkey._drawnPassword=x > /dev/null 2> refused.txt; then
             echo "::error::a Valkey password set through the render's memo was accepted"
             exit 1
           fi
           grep '_drawnPassword' refused.txt
 
+      # The default image is the one the console's release workflow publishes,
+      # ghcr.io/thonicdev/kubetower:<appVersion>. While appVersion is the
+      # 0.0.0-dev placeholder no registry holds that image, so a render without
+      # image.tag must be refused, naming the value to set - and the moment
+      # appVersion names a release, the defaults must render exactly that image.
+      - name: The default image is the published one, and a placeholder is refused
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          image() {
+            helm template kubetower "$chart" "$@" | python -c '
+          import sys, yaml
+          deps = [d for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"]
+          print(deps[0]["spec"]["template"]["spec"]["containers"][0]["image"])'
+          }
+          app=$(helm show chart "$chart" | python -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["appVersion"])')
+          if [ "$app" = 0.0.0-dev ]; then
+            if out=$(helm template kubetower "$chart" 2>&1); then
+              echo "NOT REFUSED: the defaults render $(printf '%s\n' "$out" | grep -m1 'image:')"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -q 'image.tag is empty' || { echo "refused without naming image.tag: $out"; exit 1; }
+            echo "refused, naming image.tag: appVersion is the placeholder"
+            want=ghcr.io/thonicdev/kubetower:1.2.3
+            got=$(image --set image.tag=1.2.3)
+          else
+            want=ghcr.io/thonicdev/kubetower:$app
+            got=$(image)
+          fi
+          [ "$got" = "$want" ] || { echo "the image is $got, want $want"; exit 1; }
+          echo "the image is $got"
+
+      # Several consoles survive a drain one at a time: a PodDisruptionBudget
+      # and a spread across nodes, selecting the consoles and not Valkey. With
+      # one replica, neither - a budget on one pod blocks a drain or does
+      # nothing.
+      - name: A disruption budget and a spread render only with several replicas
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          shape() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          dep = [d for d in docs if d["kind"] == "Deployment"][0]
+          pods = dep["spec"]["selector"]["matchLabels"]
+          pdbs = [d for d in docs if d["kind"] == "PodDisruptionBudget"]
+          for p in pdbs:
+              assert p["spec"]["selector"]["matchLabels"] == pods, ("the budget selects", p["spec"]["selector"], "not", pods)
+          spread = dep["spec"]["template"]["spec"].get("topologySpreadConstraints") or []
+          for c in spread:
+              assert c["labelSelector"]["matchLabels"] == pods, ("the spread selects", c["labelSelector"], "not", pods)
+          print(len(pdbs), len(spread), pdbs[0]["spec"].get("maxUnavailable") if pdbs else "-")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(shape "$@")
+            [ "$got" = "$want" ] || { echo "with '${*:-defaults}': want budgets/spreads/maxUnavailable $want, got $got"; exit 1; }
+            echo "with '${*:-defaults}': $got"
+          }
+          check "0 0 -"
+          check "1 1 1" --set replicaCount=2 --set persistence.enabled=false $oidc
+          check "1 1 1" --set replicaCount=3 --set persistence.enabled=false $oidc
+          check "0 1 -" --set replicaCount=2 --set persistence.enabled=false --set podDisruptionBudget.enabled=false $oidc
+
+      # The root filesystem is read-only, and each directory the console writes
+      # - the state directory, $HOME, the assistant's configuration directory
+      # inside it, and /tmp - is a volume. The configuration directory has to
+      # exist at start: the console writes into it without creating it, under
+      # either profile. Each emptyDir carries a size limit. Under both profiles,
+      # since the desktop one writes the same places.
+      - name: The root filesystem is read-only, and every directory the console writes is a volume
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          for profile in true false; do
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci --set serverProfile=$profile | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          spec = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]
+          c = spec["containers"][0]
+          assert c["securityContext"].get("readOnlyRootFilesystem") is True, c["securityContext"]
+          volumes = {v["name"]: v for v in spec["volumes"]}
+          mounts = {m["mountPath"]: m for m in c["volumeMounts"]}
+          for path in ["/var/lib/kubetower", "/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
+              assert path in mounts, (path, "is not mounted", sorted(mounts))
+              assert not mounts[path].get("readOnly"), (path, "is mounted read-only")
+              assert not mounts[path].get("subPath"), (path, "mounts only a sub-path")
+          for path in ["/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
+              assert "emptyDir" in volumes[mounts[path]["name"]], (path, "is not an emptyDir")
+              assert volumes[mounts[path]["name"]]["emptyDir"].get("sizeLimit"), (path, "has no sizeLimit")
+          print("read-only root, writable:", ", ".join(sorted(p for p in mounts if not mounts[p].get("readOnly"))))' \
+              | sed "s/^/serverProfile=$profile: /"
+          done
+
+      # Shutdown and memory: a pause before SIGTERM, a grace period covering
+      # it and the console's five-second shutdown, a startup probe, a timeout
+      # on every probe, and GOMEMLIMIT at 90% of the 1Gi limit. And a grace
+      # period too short to hold them is refused.
+      - name: The pod shuts down in its grace period, and the Go heap knows its limit
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          helm template kubetower "$chart" --set image.tag=0.0.0-ci | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          spec = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]
+          c = spec["containers"][0]
+          pause = int(c["lifecycle"]["preStop"]["exec"]["command"][1])
+          grace = spec["terminationGracePeriodSeconds"]
+          assert grace >= pause + 5, ("grace", grace, "pause", pause)
+          for probe in ["startupProbe", "livenessProbe", "readinessProbe"]:
+              assert c[probe].get("timeoutSeconds"), (probe, "has no timeout")
+          # Readiness is the judgement of the console itself (/readyz); liveness only
+          # asks whether it is serving (/healthz).
+          assert c["readinessProbe"]["httpGet"]["path"] == "/readyz", c["readinessProbe"]
+          assert c["livenessProbe"]["httpGet"]["path"] == "/healthz", c["livenessProbe"]
+          env = {e["name"]: e.get("value") for e in c["env"]}
+          assert env.get("GOMEMLIMIT") == str(1024 ** 3 * 90 // 100), env.get("GOMEMLIMIT")
+          print("preStop", pause, "s, grace", grace, "s, GOMEMLIMIT", env["GOMEMLIMIT"])'
+          # Each unit is its own multiplier, so more than one is checked; and a
+          # plain byte count in a values file, which YAML hands Helm as a float.
+          mem() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          c = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          print({e["name"]: e.get("value") for e in c["env"]}.get("GOMEMLIMIT"))'
+          }
+          mem_is() {
+            want="$1"; shift
+            got=$(mem "$@")
+            [ "$got" = "$want" ] || { echo "with $*: GOMEMLIMIT is $got, want $want"; exit 1; }
+            echo "with $*: GOMEMLIMIT $got"
+          }
+          mem_is 483183820 --set resources.limits.memory=512Mi
+          mem_is 1350000000 --set resources.limits.memory=1500M
+          mem_is 92160 --set resources.limits.memory=100Ki
+          values=$(mktemp)
+          printf 'resources:\n  limits:\n    memory: 1073741824\n' > "$values"
+          mem_is 966367641 -f "$values"
+          if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci --set resources.limits.memory=1.5Gi 2>&1); then
+            echo "NOT REFUSED: a 1.5Gi limit"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'resources.limits.memory is "1.5Gi"' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a 1.5Gi limit is refused, naming the value"
+          # Set by hand in extraEnv, GOMEMLIMIT is not rendered twice.
+          n=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci \
+                --set 'extraEnv[0].name=GOMEMLIMIT' --set 'extraEnv[0].value=500MiB' | grep -c 'name: GOMEMLIMIT')
+          [ "$n" = 1 ] || { echo "GOMEMLIMIT rendered $n times with extraEnv setting it"; exit 1; }
+          if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci --set terminationGracePeriodSeconds=6 2>&1); then
+            echo "NOT REFUSED: a six-second grace period"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q 'terminationGracePeriodSeconds is 6' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a grace period shorter than the pause and the shutdown is refused"
+
+      # Under the server profile the console reads the pod's own
+      # ServiceAccount and never KUBECONFIG, so neither the kubeconfig
+      # ConfigMap nor the variable is rendered. The desktop profile still gets
+      # both.
+      - name: The server profile renders no kubeconfig
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          kubeconfig() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          cm = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-kubeconfig")]
+          c = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          env = [e for e in c["env"] if e["name"] == "KUBECONFIG"]
+          print(len(cm), len(env))'
+          }
+          [ "$(kubeconfig)" = "0 0" ] || { echo "the server profile renders a kubeconfig: $(kubeconfig)"; exit 1; }
+          echo "server profile: no ConfigMap, no KUBECONFIG"
+          [ "$(kubeconfig --set serverProfile=false)" = "1 1" ] || { echo "the desktop profile lost its kubeconfig"; exit 1; }
+          echo "desktop profile: the ConfigMap and KUBECONFIG"
+
+      # Off by default; on, one policy for the console's port and, with several
+      # replicas, one admitting Valkey's port from the consoles only.
+      - name: The NetworkPolicy renders only when asked, and admits Valkey from the consoles
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          policies() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          pols = [d for d in docs if d["kind"] == "NetworkPolicy"]
+          consoles = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["selector"]["matchLabels"]
+          for p in pols:
+              if p["metadata"]["name"].endswith("-valkey"):
+                  peers = p["spec"]["ingress"][0]["from"]
+                  assert peers == [{"podSelector": {"matchLabels": consoles}}], peers
+          print(len(pols))'
+          }
+          [ "$(policies)" = 0 ] || { echo "a NetworkPolicy rendered by default"; exit 1; }
+          [ "$(policies --set networkPolicy.enabled=true)" = 1 ] || { echo "want one policy with one replica"; exit 1; }
+          [ "$(policies --set networkPolicy.enabled=true --set replicaCount=2 --set persistence.enabled=false $oidc)" = 2 ] \
+            || { echo "want two policies with several replicas"; exit 1; }
+          echo "none by default; the console's alone with one replica; Valkey's from the consoles with several"
+
+      # A single sign-on prefix in Kubernetes' own `system:` namespace is
+      # refused at render, by the console's own rule: trimmed and
+      # case-insensitively, the user-name prefix as applied (`-` is none), and
+      # only with an issuer. Each refusal must name the value and the reason;
+      # the controls must render.
+      - name: A system prefix for single sign-on is refused
+        run: |
+          set -uo pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          refused() {
+            want="$1"; shift
+            if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci $oidc "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without naming $want: $out"; exit 1; }
+            printf '%s\n' "$out" | grep -qF 'starts with "system:"' || { echo "refused without saying why: $out"; exit 1; }
+            echo "refused, naming $want: $*"
+          }
+          renders() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" > /dev/null || { echo "REFUSED: $*"; exit 1; }
+            echo "renders: $*"
+          }
+          refused 'auth.oidc.usernamePrefix is "system:foo"' --set-string auth.oidc.usernamePrefix=system:foo
+          refused 'auth.oidc.usernamePrefix is " System:foo"' --set-string 'auth.oidc.usernamePrefix= System:foo'
+          refused 'auth.oidc.groupsPrefix is "system:"' --set-string auth.oidc.groupsPrefix=system:
+          refused 'auth.oidc.groupsPrefix is "SYSTEM:x"' --set-string auth.oidc.groupsPrefix=SYSTEM:x
+          # Unset, the prefix is the issuer and '#' - unless the claim is email.
+          refused 'auth.oidc.usernamePrefix is unset' --set auth.oidc.issuer=system:idp --set auth.oidc.usernameClaim=sub
+          renders $oidc --set-string auth.oidc.usernamePrefix=-
+          renders $oidc --set-string auth.oidc.usernamePrefix=oidc:
+          renders $oidc
+          renders $oidc --set auth.oidc.usernameClaim=sub
+          renders $oidc --set-string auth.oidc.groupsPrefix=oidc:
+          renders --set-string auth.oidc.usernamePrefix=system:foo --set-string auth.oidc.groupsPrefix=system:
+          renders $oidc --set auth.oidc.issuer=system:idp
+
   rbac:
-    name: the ClusterRole carries no escalation verb and no stray wildcard
+    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants what the console asks for
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,6 +442,14 @@ jobs:
       # if it does not. A checker nobody has seen fail is a checker nobody knows
       # is connected.
       - run: python test/rbac-check.py --self-test
+      # The other direction: every request in test/console-needs.yaml - what
+      # the console asks the cluster for, with the source file of each - is
+      # granted when its switch is on, and nothing behind an off-by-default
+      # switch is granted by the defaults. A control the console offers and
+      # the role refuses answers 403 for every person, whatever their own
+      # RoleBindings say. --self-test first, for the reason above.
+      - name: the role grants what the console asks for
+        run: python test/console-needs-check.py --self-test
 
   persistence:
     name: the console is told whether its state survives, and a drawn password needs it

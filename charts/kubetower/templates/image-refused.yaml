@@ -1,0 +1,16 @@
+{{/*
+The image this chart will not install: one that exists on no registry.
+
+The default image is the one the console's release workflow publishes,
+ghcr.io/thonicdev/kubetower:<version>, and the tag defaults to the chart's
+appVersion. While appVersion is the 0.0.0-dev placeholder there is no such
+image, and an install would sit in ImagePullBackOff with nothing saying why -
+so the render is refused instead, naming what to set. Setting appVersion to a
+released version makes this go away without touching this file.
+
+A tag you set yourself is never refused: a locally built image, loaded into
+the nodes, is a legitimate install.
+*/}}
+{{- if and (not .Values.image.tag) (eq (toString .Chart.AppVersion) "0.0.0-dev") }}
+{{- fail (printf "image.tag is empty and the chart's appVersion is the placeholder 0.0.0-dev, so the image would be %s:0.0.0-dev, which no registry holds. Set image.tag to a published version - the console's release workflow pushes %s:<version> for each tag v<version> - or to an image you built and made reachable from the nodes (then set image.repository too)." .Values.image.repository .Values.image.repository) }}
+{{- end }}

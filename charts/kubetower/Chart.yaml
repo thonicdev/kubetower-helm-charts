@@ -2,17 +2,22 @@ apiVersion: v2
 name: kubetower
 description: >-
   The KubeTower console, in a pod. By default it runs the console's server
-  profile, which has no local shell, node shell or assistant; the desktop
-  profile is one value away. Either way it is one process, one password and
-  one identity for everybody who signs in - not a multi-user console.
+  profile, which reads the pod's own ServiceAccount and has no local shell,
+  node shell or assistant; the desktop profile is one value away. With single
+  sign-on, people sign in as themselves and the cluster is asked what each may
+  do - but every request is still made as the pod's ServiceAccount, which is
+  the ceiling of what anybody can do through it.
 type: application
 
 # The chart's own version. It is not the console's.
-version: 0.1.0
+version: 0.2.0
 
-# What this chart was written against. `kubetower` carries no git tag, so a
-# binary built from the tree reports `dev` - there is no released version to
-# name here and pretending otherwise would put a number in a report.
+# The console's version, and the default image tag: the console's release
+# workflow publishes ghcr.io/thonicdev/kubetower:<version> for each tag
+# v<version>. No tag has been cut yet, so this is a placeholder that names no
+# image, and the chart refuses to render it (templates/image-refused.yaml) -
+# set image.tag to a published version. Set this to that version in the same
+# change that cuts the tag, and the refusal goes away by itself.
 appVersion: "0.0.0-dev"
 
 kubeVersion: ">=1.25.0-0"

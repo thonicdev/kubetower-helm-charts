@@ -2,24 +2,35 @@
 {{/*
 The console's permissions.
 
-Derived from what the code reads, not from a convenience role:
+Derived from what the code in thonicdev/kubetower asks the cluster for, not
+from a convenience role:
 
   internal/resources/kinds.go   the list pages - one entry per kind below
-  internal/helm/helm.go:102     Helm releases are Secrets, type=helm.sh/release.v1
-  internal/metrics/metrics.go   metrics.k8s.io, and Prometheus by port-forward
+  internal/helm/helm.go         Helm releases are Secrets, type=helm.sh/release.v1
+  internal/metrics              metrics.k8s.io; Prometheus through the service
+                                proxy (prom.go), or a port-forward (tunnel.go)
   internal/kubeletstats         nodes/proxy
   internal/terminal/exec.go     pods/exec
-  internal/terminal/portforward pods/portforward
+  internal/forward              pods/portforward
   internal/customresources      every CRD the cluster serves, dynamically
   internal/access               subjectaccessreviews, asked before every write
+  internal/edit                 every write: patch, create, delete, and an
+                                eviction (door.go)
+  internal/actions/needs.go     what each action is reviewed as: patch on the
+                                object, create on pods/eviction, create on jobs
+
+test/console-needs.yaml lists those requests one by one, with the file each
+comes from, and test/console-needs-check.py fails when a switch that should
+grant one does not.
 
 Not the built-in `view` ClusterRole: it excludes Secrets, which the Secrets
 page and the Helm list both need, and it carries rules for things this console
 never asks about. An explicit list is longer and says what it is for.
 
-Not cluster-admin. Ever. Whatever is granted here is granted to every person
-who knows the console's password, because the console acts as this
-ServiceAccount and not as the person signed in.
+Not cluster-admin. Ever. Every request the console makes is made as this
+ServiceAccount, whoever signed in: with single sign-on the console first asks
+the cluster whether that person may, so this role is the ceiling of what
+anybody gets; with the shared password, its holder gets all of it.
 */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -161,15 +172,31 @@ rules:
     verbs: ["get", "list", "watch"]
 {{- end }}
 {{- if .Values.rbac.write }}
-  # Editing. The drawer's manifest editor, the scale control, delete, and the
-  # bulk actions in internal/actions.
+  # Editing. The drawer's manifest editor (a merge patch, internal/edit), the
+  # create and delete controls, and the actions in internal/actions: restart
+  # and scale patch the workload, suspend and resume patch the CronJob,
+  # trigger creates a Job.
   #
-  # Granted to the pod, therefore to everybody with the password. There is no
-  # per-person audit trail: every change in the API server's audit log is
-  # attributed to this ServiceAccount.
+  # Granted to the pod, therefore the ceiling for everybody who signs in. The
+  # API server's audit log attributes every change to this ServiceAccount; the
+  # console's own log names the person behind each one when they signed in
+  # through single sign-on, and names nobody for the shared password.
   - apiGroups: [""]
-    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "serviceaccounts"]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "serviceaccounts", "replicationcontrollers"]
     verbs: ["create", "update", "patch", "delete"]
+  # Cordon, uncordon and drain set spec.unschedulable with a patch on the node
+  # (internal/actions/needs.go). A patch on a node can also change its labels
+  # and taints - where workloads may be scheduled - which is no more than the
+  # rest of this switch already amounts to.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
+  # Evict, and the second half of a drain: an Eviction posted to each pod
+  # (internal/edit/door.go), which a PodDisruptionBudget can refuse - unlike a
+  # delete.
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
   - apiGroups: ["apps"]
     resources: ["deployments", "deployments/scale", "statefulsets", "statefulsets/scale", "daemonsets", "replicasets"]
     verbs: ["create", "update", "patch", "delete"]
@@ -190,10 +217,30 @@ rules:
   # console's terminal runs as this ServiceAccount; internal/forward's own
   # comment says a port-forward "creates nothing" in RBAC's spelling and that
   # what travels through the tunnel may be anything at all. Both are true of
-  # everybody who can sign in.
+  # everybody who can sign in. It is also the metrics layer's fallback route
+  # to Prometheus (internal/metrics/tunnel.go) when rbac.prometheusProxy is
+  # off or the service proxy is refused.
   - apiGroups: [""]
     resources: ["pods/exec", "pods/attach", "pods/portforward"]
     verbs: ["create", "get"]
+{{- end }}
+{{- if .Values.rbac.prometheusProxy }}
+  # Prometheus, through the API server's service proxy (internal/metrics/
+  # prom.go: /api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The
+  # verb is the request's, and the console only reads.
+  #
+  # Unnarrowed, it is a proxy to every Service in the cluster, not only
+  # Prometheus - GET requests only, but to any HTTP endpoint that trusts the
+  # cluster network. The chart cannot know where Prometheus runs, so the
+  # narrowing is yours: rbac.prometheusProxyServices names the Services, in
+  # the `<name>:<port>` form the console requests, as resourceNames.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    {{- with .Values.rbac.prometheusProxyServices }}
+    resourceNames:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    verbs: ["get"]
 {{- end }}
 {{- if .Values.rbac.nodeProxy }}
   # The kubelet's own stats API, through the API server's node proxy

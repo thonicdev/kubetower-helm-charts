@@ -3,10 +3,12 @@
 Helm charts for deploying [KubeTower](https://github.com/thonicdev/kubetower)
 into a Kubernetes cluster.
 
-**Not a release yet.** There is no published image and no chart repository
-behind this. You build the image, you load it into your cluster, you install
-from this checkout. Everything below says what it does and what it does not,
-because the gap between those two is the whole point of reading a chart.
+**Not a release yet.** The console's release workflow publishes an image for
+each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and no version
+has been tagged yet; there is no chart repository either. You install from this
+checkout, naming the image version (or your own build). Everything below says
+what it does and what it does not, because the gap between those two is the
+whole point of reading a chart.
 
 ## What is here
 
@@ -62,6 +64,16 @@ closes, so the Valkey password alone reads no session and forges none.
 Nothing is written to disk: a restart of the Valkey pod signs everybody out,
 which is what a restart of a single console costs too.
 
+**What several replicas buy is a console that survives losing one of them.**
+The chart spreads them across nodes (`kubernetes.io/hostname`,
+`ScheduleAnyway`, replaced by `topologySpreadConstraints` if you set it) and
+gives them a PodDisruptionBudget of `maxUnavailable: 1`, so a node drain or an
+upgrade takes them one at a time. **What it does not buy is a store that
+survives**: Valkey is one pod, and its eviction - a drain of its node, an
+upgrade of its image, a node lost - signs everybody out. It has no
+PodDisruptionBudget, deliberately: a budget on a single pod blocks the drain of
+its node outright, which would trade one sign-in for a stuck node.
+
 **What several replicas do not offer**, because each console's state directory
 is its own: the rail, column and density preferences cannot be changed (every
 replica draws the defaults), the settings are read-only, port-forwards are off,
@@ -105,20 +117,37 @@ were used, and nothing the Secrets read had not already given.
 
 ```bash
 helm install kubetower ./charts/kubetower -n kubetower --create-namespace \
-  --set image.tag=helm-test --set serverProfile=true \
+  --set image.tag=<version> \
   --set replicaCount=2 --set persistence.enabled=false \
-  --set auth.oidc.issuer=... --set auth.oidc.clientID=... --set auth.oidc.redirectURL=...
+  --set auth.oidc.issuer=... --set auth.oidc.clientID=... --set auth.oidc.redirectURL=... \
+  --set networkPolicy.enabled=true
 ```
 
-Not done yet: a NetworkPolicy restricting Valkey to the console's pods, TLS to
-Valkey, and a Valkey that survives its own restart.
+`networkPolicy.enabled` admits Valkey's port from this release's consoles and
+from nothing else, so its password alone is no longer enough to connect - on a
+network plugin that enforces NetworkPolicy. Not done yet: TLS to Valkey, and a
+Valkey that survives its own restart.
 
-## There is no image to pull
+## The image
 
-Nothing in the console's repository publishes one yet: its release workflow
-drafts binaries, its security workflow builds with `push: false`, and its CI
-builds an image, probes it and discards it. So you build it and make it
-reachable from your cluster:
+The default is `ghcr.io/thonicdev/kubetower`, which is where the console's
+release workflow pushes one image per tag `v<version>`, tagged `<version>`.
+There is no `latest`. The tag defaults to the chart's `appVersion`, and while
+that is the `0.0.0-dev` placeholder **the chart refuses to render without
+`image.tag`**, rather than install an image no registry holds and leave the pod
+in `ImagePullBackOff`.
+
+**The image is private while `thonicdev/kubetower` is**: a package on ghcr.io
+inherits its repository's access. Pulling it then needs a token with
+`read:packages` from somebody who can read that repository:
+
+```bash
+kubectl -n kubetower create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+# then: --set image.pullSecrets[0].name=ghcr-pull
+```
+
+Or build it yourself and make it reachable from your cluster:
 
 ```bash
 git clone https://github.com/thonicdev/kubetower && cd kubetower
@@ -126,6 +155,7 @@ DOCKER_BUILDKIT=1 docker build --build-arg KT_VERSION=helm-test -t kubetower:hel
 # kind:           kind load docker-image kubetower:helm-test
 # minikube:       minikube image load kubetower:helm-test
 # Docker Desktop: nothing, the node already sees the daemon's images
+# and install with --set image.repository=kubetower --set image.tag=helm-test
 ```
 
 ## Install
@@ -133,7 +163,7 @@ DOCKER_BUILDKIT=1 docker build --build-arg KT_VERSION=helm-test -t kubetower:hel
 ```bash
 helm install kubetower ./charts/kubetower \
   --namespace kubetower --create-namespace \
-  --set image.tag=helm-test
+  --set image.tag=<version>
 ```
 
 Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
@@ -149,15 +179,49 @@ and the render comes out wrong or fails.
 ## What it deploys
 
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
-password hash if you set one), ConfigMap (the kubeconfig), PersistentVolumeClaim
-(the state directory), Deployment, Service. Ingress only if you ask, and it is
-off because an Ingress in front of this publishes cluster credentials behind one
-shared password.
+password hash if you set one), PersistentVolumeClaim (the state directory),
+Deployment, Service. A ConfigMap holding a kubeconfig only for the desktop
+profile (`serverProfile: false`). Ingress only if you ask, and it is off
+because an Ingress in front of this publishes cluster credentials behind one
+shared password. NetworkPolicies only if you ask (`networkPolicy.enabled`).
 
-With `replicaCount` above one, no PersistentVolumeClaim, and four more objects
-for the store the consoles share: a Valkey StatefulSet of one, its Service, its
-ConfigMap (the configuration without the password) and its Secret (the
-password, unless `valkey.existingSecret` names yours).
+With `replicaCount` above one, no PersistentVolumeClaim, a PodDisruptionBudget
+for the consoles, and four more objects for the store they share: a Valkey
+StatefulSet of one, its Service, its ConfigMap (the configuration without the
+password) and its Secret (the password, unless `valkey.existingSecret` names
+yours).
+
+### The pod
+
+- **A read-only root filesystem.** The console writes to its state directory,
+  to `$HOME` (the caches its tools keep, and the assistant's configuration in
+  `~/.claude`, which it writes at every start) and to `/tmp` (the terminal's
+  work root and its per-context homes); each is a volume, the emptyDirs bounded
+  by `scratchSizeLimits`, and nothing else is writable. `/tmp` and
+  `/home/kubetower` are the chart's own mounts, so an `extraVolumeMounts` entry
+  at either is a duplicate the API server refuses. If something you add writes
+  elsewhere, mount a volume there; `securityContext.readOnlyRootFilesystem=false`
+  is the way back. It runs as uid 100, drops every capability, cannot escalate, uses
+  the runtime's default seccomp profile, and gets a projected ServiceAccount
+  token that expires after an hour instead of the legacy one.
+- **Shutdown.** On deletion, `preStop` pauses five seconds so the endpoint's
+  removal reaches the Service and the ingress before the listener closes; then
+  SIGTERM, and the console gives in-flight requests five seconds.
+  `terminationGracePeriodSeconds` (15) covers both, and the chart refuses one
+  that does not. A log stream or a pod shell open at that moment is cut, and
+  the browser has to open it again.
+- **Probes.** A startup probe, liveness on `/healthz` and readiness on
+  `/readyz`, each with a timeout. Liveness asks only whether the console is
+  serving, so a console whose clusters are unreachable is not restarted.
+  Readiness follows the console's own judgement: whether its clusters answer -
+  under the server profile, the API server the pod runs in - and, in console
+  versions that check it, whether its audit log can still be written. A replica
+  that cannot record what people do leaves the Service. Whether a brief
+  API-server error should count is the console's decision, made in `/readyz`;
+  the chart does not work around it.
+- **Memory.** `GOMEMLIMIT` is set to `goMemLimitPercent` (90) of the memory
+  limit, so the Go runtime collects harder near the limit instead of being
+  killed at it.
 
 ### Without persistence
 
@@ -173,16 +237,18 @@ every restart would draw a new one. Turning persistence off needs
 `auth.passwordHash`, `auth.existingSecret`, or single sign-on with
 `auth.localAccount: false`. `test/persistence-check.py` holds both halves.
 
-### The kubeconfig is the trick
+### How the pod reaches the API server
 
-The binary reads `KUBECONFIG` and has no in-cluster path of its own. The chart
-therefore writes a kubeconfig pointing at `kubernetes.default.svc`, with the API
-server's CA and a **projected, expiring ServiceAccount token** referenced as
-`tokenFile` so client-go re-reads it as it rotates. That is what
-`rest.InClusterConfig()` would have built; here it is built in YAML instead.
+Under the server profile, the default, the console reads the pod's own
+ServiceAccount - `rest.InClusterConfig()`, over the **projected, expiring
+token** the Deployment mounts - and does not read `KUBECONFIG` at all. So the
+chart renders no kubeconfig for it.
 
-When the console learns to read its own ServiceAccount, this ConfigMap is the
-first thing to delete.
+The desktop profile (`serverProfile: false`) reads only `KUBECONFIG`. For it,
+the chart writes a kubeconfig pointing at `kubernetes.default.svc`, with the
+API server's CA and the same token referenced as `tokenFile`, so client-go
+re-reads it as it rotates; or mounts your own with `kubeconfig.generate:
+false`.
 
 ### RBAC
 
@@ -195,10 +261,17 @@ One rule is not read-only and is always there: `create` on
 before acting, rather than acting with its own. It asks the cluster a question
 and grants nothing.
 
-Three switches are off and each one is a decision rather than a default:
-`rbac.write`, `rbac.exec`, `rbac.nodeProxy`. `rbac.customResources` is off too —
-the custom-resource browser needs a wildcard read, and a wildcard is worth typing
-out deliberately.
+Four switches are off and each one is a decision rather than a default:
+`rbac.write`, `rbac.exec`, `rbac.nodeProxy`, `rbac.prometheusProxy`.
+`rbac.customResources` is off too — the custom-resource browser needs a
+wildcard read, and a wildcard is worth typing out deliberately.
+
+| Switch | What the console does with it |
+|---|---|
+| `rbac.write` | Edit, create, delete; restart, scale, suspend, resume, trigger; cordon, uncordon and drain a node (`patch` on `nodes`); evict a pod (`create` on `pods/eviction`) |
+| `rbac.exec` | A shell in a pod, a port-forward, and the fallback route to Prometheus |
+| `rbac.prometheusProxy` | Prometheus through the API server's service proxy (`get` on `services/proxy`), which is a proxy to every Service in the cluster unless `rbac.prometheusProxyServices` names yours as `<name>:<port>` |
+| `rbac.nodeProxy` | Per-node usage from the kubelet where there is no metrics-server |
 
 What two of them amount to, in plain terms: **`rbac.write` is cluster-admin on
 most clusters**, because creating a pod in a namespace means running as any
@@ -211,6 +284,13 @@ session key and mint a session of their own.
 `bind`), a wildcard verb, and any wildcard but the custom-resource one. That is
 all it checks: it passes with every switch on, so a green run says nothing about
 whether the switches you chose are safe.
+
+`test/console-needs-check.py` checks the other direction: every request in
+`test/console-needs.yaml` - what the console asks the cluster for, each with
+the source file in the console's repository it comes from - is granted when
+its switch is on, and the off-by-default switches grant nothing when off. The
+list is kept by hand, so it catches a grant that goes missing, not a request
+the console starts making that nobody added to it.
 
 `charts/kubetower/templates/rbac.yaml` names the source file each rule exists
 for.
@@ -245,10 +325,11 @@ answers `400 namespace and pod must be Kubernetes names`, from its own handler.
 The 404s are the router holding nothing, not the surface being down. `kubectl exec` is then the only shell into the pod, bounded by
 your RBAC rather than by the console's own switches.
 
-**Turning it on does not make the console multi-user.** It makes it smaller. One
-password and one session are still shared, so the warning above stands either
-way. It is on by default because the alternative was the wrong way round: the
-shell the desktop profile keeps is a shell holding this pod's ServiceAccount.
+**Turning it on does not change who the cluster sees.** It makes the console
+smaller, and makes it read the pod's own ServiceAccount; every request is still
+that ServiceAccount's, so the warning above stands either way. It is on by
+default because the alternative was the wrong way round: the shell the desktop
+profile keeps is a shell holding this pod's ServiceAccount.
 
 ## Single sign-on: the name a RoleBinding names
 
@@ -297,7 +378,10 @@ has to match as well**: kube-apiserver's `--oidc-username-claim` defaults to
 `claimMappings.username.claim` under structured authentication.
 
 A prefix that would start with `system:` - Kubernetes' own users - is refused
-by the console at start-up. Changing the prefix or the claim changes everyone's
+by the console at start-up, and by the chart at render, with the same rule:
+compared trimmed and case-insensitively, the user-name prefix as it will be
+applied (`-` is never refused; unset is the issuer and `#`), and only when an
+issuer is set. The groups prefix is refused the same way. Changing the prefix or the claim changes everyone's
 name: people signed in under the old one sign in again, and RoleBindings
 written for it match nobody. The value needs a console image that knows
 `KT_OIDC_USERNAME_PREFIX`; an older one ignores it.
@@ -352,7 +436,8 @@ discovery from, and the issuer stays what the browser sees.
 
 ## What this chart does not do
 
-- No published image, no registry, no chart repository, no `helm package`.
+- No chart repository and no `helm package`. The image is published per
+  console release; the chart is not.
 - No per-person identity towards the cluster. With `auth.oidc` set, the
   console asks the cluster what each person may do before acting, but the
   request itself is the pod's ServiceAccount's, so the API server's audit log
@@ -361,16 +446,18 @@ discovery from, and the issuer stays what the browser sees.
   multi-tenancy. And no group-to-permission mapping, ever: a group reaches a
   right through a RoleBinding the cluster's owner writes, not through a value
   here.
-- No NetworkPolicy. The console legitimately talks to the API server, to
-  Prometheus by port-forward, and to whatever a forward points at; a policy that
-  is honest about that permits nearly everything, and one that is not breaks the
-  console.
+- No egress NetworkPolicy, and no NetworkPolicy at all by default. The
+  optional one is ingress only. The console legitimately talks to the API
+  server, the identity provider, Prometheus and whatever a forward points at; an
+  egress policy honest about that permits nearly everything, and one that is not
+  breaks the console.
 - No high availability of the store. `replicaCount` defaults to 1, with
   `Recreate`, because the state directory is ReadWriteOnce and the forward table
   is in memory. Above one, the consoles roll with `RollingUpdate` and share a
   single Valkey pod that keeps nothing on disk: losing it signs everybody out.
-- No PodDisruptionBudget, no HorizontalPodAutoscaler. Both would be about a
-  service; this is one operator's console.
+- No HorizontalPodAutoscaler: the consoles hold no load worth scaling on, and
+  each replica drops what only one pod can hold. No PodDisruptionBudget with one
+  replica, where it could only block a drain or do nothing.
 
 ## Licence
 

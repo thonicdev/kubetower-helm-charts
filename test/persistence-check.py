@@ -40,7 +40,9 @@ OFF = "--set=persistence.enabled=false"
 def render(chart, args):
     """(returncode, rendered documents or None, stderr)."""
     proc = subprocess.run(
-        ["helm", "template", "kt", chart, *args],
+        # The image tag is irrelevant here; without one the chart refuses to
+        # render while its appVersion is the placeholder.
+        ["helm", "template", "kt", chart, "--set=image.tag=0.0.0-check", *args],
         capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
