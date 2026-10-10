@@ -488,6 +488,49 @@ jobs:
           git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
           python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
 
+  # The release path, without the release. release.yml runs
+  # .github/scripts/publish-chart.sh on a chart tag against ghcr.io; this runs
+  # the same script against a registry living only for this job, so a release
+  # takes no step that CI has not taken. Nothing leaves the runner.
+  publish:
+    name: the chart packages, pushes, and comes back identical
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2.8.3
+        ports: ["5000:5000"]
+    steps:
+      - uses: actions/checkout@v4
+      # The version release.yml pins.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      # First the refusals, which must stop a release before anything is
+      # pushed: a tag that is not the chart's version, and - while appVersion
+      # is the placeholder - any tag at all.
+      - name: a tag that is not the chart's version, and the placeholder appVersion, are refused
+        run: |
+          set -o pipefail
+          refused() {
+            want="$1"; shift
+            if out=$(bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without saying why: $out"; exit 1; }
+            echo "refused ($want): $*"
+          }
+          version=$(helm show chart charts/kubetower | sed -n 's/^version:[[:space:]]*//p')
+          app=$(helm show chart charts/kubetower | sed -n 's/^appVersion:[[:space:]]*//p' | tr -d '"')
+          refused "the tag is kubetower-0.0.0-not-this" kubetower-0.0.0-not-this oci://localhost:5000/charts --plain-http --allow-placeholder
+          if [ "$app" = 0.0.0-dev ]; then
+            refused "appVersion is the 0.0.0-dev placeholder" "kubetower-$version" oci://localhost:5000/charts --plain-http
+          fi
+      - name: package, push to the job's registry, pull back, compare and render
+        run: |
+          set -o pipefail
+          version=$(helm show chart charts/kubetower | sed -n 's/^version:[[:space:]]*//p')
+          bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder
+
   persistence:
     name: the console is told whether its state survives, and a drawn password needs it
     runs-on: ubuntu-latest

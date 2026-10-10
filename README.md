@@ -4,9 +4,12 @@ Helm charts for deploying [KubeTower](https://github.com/thonicdev/kubetower)
 into a Kubernetes cluster.
 
 **Not a release yet.** The console's release workflow publishes an image for
-each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and no version
-has been tagged yet; there is no chart repository either. You install from this
-checkout, naming the image version (or your own build). Everything below says
+each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and this
+repository's publishes the chart for each chart tag, at
+`oci://ghcr.io/thonicdev/charts/kubetower`. Neither has been tagged yet: the
+first chart waits for the first console release, since a chart naming no
+released image installs nothing. Until then you install from this checkout,
+naming the image version (or your own build). Everything below says
 what it does and what it does not, because the gap between those two is the
 whole point of reading a chart.
 
@@ -17,6 +20,7 @@ whole point of reading a chart.
 | `charts/kubetower/` | The console in a pod |
 | `charts/kubetower/console-needs.yaml` | What the console asks the cluster for, request by request. The `ClusterRole` is rendered from it |
 | `test/oidc/` | A Dex fixture for developing single sign-on against. Not part of the chart |
+| `.github/workflows/release.yml` | Publishes the chart on a tag `kubetower-<version>` |
 
 ## The one sentence that matters
 
@@ -169,6 +173,23 @@ helm install kubetower ./charts/kubetower \
 
 Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
 prints all three commands with your values filled in.
+
+Once a chart version is published, the same install needs no clone:
+
+```bash
+helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <chart version> \
+  --namespace kubetower --create-namespace
+```
+
+## Publishing
+
+A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
+`.github/scripts/publish-chart.sh`: it refuses a tag that is not the version in
+`Chart.yaml`, refuses the placeholder `appVersion`, packages the chart, pushes
+it to `oci://ghcr.io/thonicdev/charts`, pulls it back, checks it is byte for
+byte what was pushed, and renders it. `chart.yml` runs the same script on every
+pull request against a registry that lives only for the job, so a release takes
+no step CI has not taken. Nobody has pushed a tag yet.
 
 ## Upgrading
 
@@ -458,8 +479,9 @@ discovery from, and the issuer stays what the browser sees.
 
 ## What this chart does not do
 
-- No chart repository and no `helm package`. The image is published per
-  console release; the chart is not.
+- No published chart yet, and no `helm repo add`. The chart is published as
+  an OCI artefact, which `helm install oci://...` reads directly; the first
+  version waits for the first console release.
 - No per-person identity towards the cluster. With `auth.oidc` set, the
   console asks the cluster what each person may do before acting, but the
   request itself is the pod's ServiceAccount's, so the API server's audit log

@@ -1,0 +1,85 @@
+# Publish the chart, on a chart tag.
+#
+# A tag `kubetower-<version>` packages charts/kubetower and pushes it as an OCI
+# artefact to ghcr.io/thonicdev/charts, from which it installs with no clone:
+#
+#   helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <version>
+#
+# What it refuses, and where: .github/scripts/publish-chart.sh refuses a tag
+# that disagrees with Chart.yaml's version and the placeholder appVersion,
+# before anything is pushed; then it pulls the chart back and compares it byte
+# for byte. chart.yml runs that same script on every pull request against a
+# throwaway registry, so the release's steps have run before a tag ever does.
+#
+# The tag is pushed by a person. Nothing here creates one.
+name: release
+
+on:
+  push:
+    tags: ["kubetower-*"]
+
+# Nothing by default; the job below asks for what it needs.
+permissions: {}
+
+# One release of a given tag at a time, never cancelled half-way through a push.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: package and push the chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The one write: pushing the package to ghcr.io under this organisation.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The same Helm as chart.yml's publish job, pinned, so a release does not
+      # change tool between the dry run and the push.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: pip install pyyaml
+
+      # The checks that say what is about to be published is the chart CI
+      # passed: the role grants exactly what the console asks for, and nothing
+      # dangerous. Cheap, and a release is the moment they must hold.
+      - name: The role is what the console asks for, and carries no escalation
+        run: |
+          set -o pipefail
+          python test/rbac-check.py --self-test
+          python test/console-needs-check.py --self-test
+
+      # The registry credential goes into a file under the runner's temporary
+      # directory, named by HELM_REGISTRY_CONFIG, and is removed whatever
+      # happens - not into the home directory, where it would outlive the job.
+      - name: Log in to ghcr.io
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -o pipefail
+          mkdir -p "$(dirname "$HELM_REGISTRY_CONFIG")"
+          printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+
+      - name: Package, push, and read it back
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          bash .github/scripts/publish-chart.sh "$TAG" oci://ghcr.io/thonicdev/charts | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out and remove the credential
+        if: always()
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+        run: |
+          set -o pipefail
+          helm registry logout ghcr.io || true
+          rm -rf "$(dirname "$HELM_REGISTRY_CONFIG")"
