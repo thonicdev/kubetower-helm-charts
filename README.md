@@ -185,12 +185,26 @@ helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <chart
 ## Publishing
 
 A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
-`.github/scripts/publish-chart.sh`: it refuses a tag that is not the version in
-`Chart.yaml`, refuses the placeholder `appVersion`, packages the chart, pushes
-it to `oci://ghcr.io/thonicdev/charts`, pulls it back, checks it is byte for
-byte what was pushed, and renders it. `chart.yml` runs the same script on every
-pull request against a registry that lives only for the job, so a release takes
-no step CI has not taken. Nobody has pushed a tag yet.
+`.github/scripts/publish-chart.sh`. Before anything is pushed it refuses:
+
+- a tag that is not the version in `Chart.yaml`;
+- a tagged commit that is not on `main`;
+- the placeholder `appVersion`;
+- a role read from another console than the one the chart installs: the
+  console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
+  derived from, read from the console's repository;
+- a version the registry already holds. A published version is never
+  replaced; bump the chart's version instead.
+
+Then it packages the chart, pushes it to `oci://ghcr.io/thonicdev/charts`, pulls
+it back, checks it is byte for byte what was pushed, and renders it. After the
+registry login is gone, `.github/scripts/read-chart-anonymously.sh` reads it
+once more with no login, so a package nobody else can read fails the release
+instead of the first install. `chart.yml` runs both scripts on every pull
+request against a registry that lives only for the job, and proves each
+refusal, so a release takes no step CI has not taken. The job holding the
+package token installs nothing and runs only actions pinned to a commit.
+Nobody has pushed a tag yet.
 
 ## Upgrading
 

@@ -512,15 +512,24 @@ jobs:
         image: registry:2.8.3
         ports: ["5000:5000"]
     steps:
-      - uses: actions/checkout@v4
-      # The version release.yml pins.
-      - uses: azure/setup-helm@v4
+      # Pinned as release.yml pins them; the history is for the main-branch check.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.17.3
+          token: ""
       # First the refusals, which must stop a release before anything is
-      # pushed: a tag that is not the chart's version, and - while appVersion
-      # is the placeholder - any tag at all.
-      - name: a tag that is not the chart's version, and the placeholder appVersion, are refused
+      # pushed: a tag that is not the chart's version; while appVersion is the
+      # placeholder, any tag at all; on a pull request, a commit that is not on
+      # main; and a role derived from another console commit than the
+      # console's tag v<appVersion>, or a console tag that cannot be read. The
+      # last two run on a copy of the chart with a real-looking appVersion and
+      # a console repository made here, since no console is released yet.
+      - name: what a release must refuse before it pushes, is refused
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -o pipefail
           refused() {
@@ -531,17 +540,55 @@ jobs:
             printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without saying why: $out"; exit 1; }
             echo "refused ($want): $*"
           }
-          version=$(helm show chart charts/kubetower | sed -n 's/^version:[[:space:]]*//p')
-          app=$(helm show chart charts/kubetower | sed -n 's/^appVersion:[[:space:]]*//p' | tr -d '"')
-          refused "the tag is kubetower-0.0.0-not-this" kubetower-0.0.0-not-this oci://localhost:5000/charts --plain-http --allow-placeholder
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          app=$(sed -n 's/^appVersion:[[:space:]]*//p' charts/kubetower/Chart.yaml | tr -d '"')
+          local=oci://localhost:5000/charts
+          refused "the tag is kubetower-0.0.0-not-this" kubetower-0.0.0-not-this "$local" --plain-http --allow-placeholder
           if [ "$app" = 0.0.0-dev ]; then
-            refused "appVersion is the 0.0.0-dev placeholder" "kubetower-$version" oci://localhost:5000/charts --plain-http
+            refused "appVersion is the 0.0.0-dev placeholder" "kubetower-$version" "$local" --plain-http
           fi
+          if [ "$EVENT" = pull_request ]; then
+            refused "is not on origin/main" "kubetower-$version" "$local" --plain-http --allow-placeholder --on-branch origin/main
+          fi
+          copy=$RUNNER_TEMP/tie
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" tag v9.9.9
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
+            refused "could not be read" "kubetower-$version" "$local" --plain-http
       - name: package, push to the job's registry, pull back, compare and render
         run: |
           set -o pipefail
-          version=$(helm show chart charts/kubetower | sed -n 's/^version:[[:space:]]*//p')
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
           bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder
+      # A published version is never replaced: the same publish again must be
+      # refused, and the registry must still hold the first.
+      - name: publishing the same version again is refused
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          if out=$(bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder 2>&1); then
+            echo "NOT REFUSED: a second publish of $version"; printf '%s\n' "$out"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF "is already published" || { echo "refused without saying why: $out"; exit 1; }
+          echo "a second publish of $version is refused"
+      # As release.yml reads it after logging out: with no login at all. The
+      # job's registry has no authentication, so here this proves the script,
+      # not a package's visibility.
+      - name: the chart reads back with no login
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower "$version" --plain-http
+          if bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower 0.0.0-never-pushed --plain-http; then
+            echo "NOT REFUSED: a version nobody pushed read back"; exit 1
+          fi
+          echo "a version nobody pushed is refused"
 
   persistence:
     name: the console is told whether its state survives, and a drawn password needs it
