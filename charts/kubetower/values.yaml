@@ -7,7 +7,10 @@
 # `serverProfile: true` below passes `--incluster`, which reads this pod's own
 # ServiceAccount and removes the local shell, the node shell and the assistant.
 # Setting it false deploys the desktop profile on a machine that happens to be
-# a pod, shell included. What holds under either profile:
+# a pod, with its local shell - a shell that runs kubectl as this pod's
+# ServiceAccount, limited to the role below, which grants only what the console
+# asks for: no watch, no update, no scale subresource, no attach (see the
+# README, "Upgrading to 0.3.0"). What holds under either profile:
 #
 #   * With no identity provider: one password and one shared account - the
 #     password names nobody. With `auth.oidc` set, people sign in as

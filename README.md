@@ -213,6 +213,34 @@ pass your values file again with `-f`. Plain `--reuse-values` keeps only the
 values the previous release stored, so any key a newer chart adds is missing,
 and the render comes out wrong or fails.
 
+### To 0.3.0: the role grants only what the console asks for
+
+The `ClusterRole` is rendered from `charts/kubetower/console-needs.yaml` (see
+[RBAC](#rbac)), and an upgrade removes every grant the console never uses:
+`watch`; `update`; the `*/scale` and `*/status` subresources; `pods/attach`;
+`nodes/stats` and `nodes/metrics`; `get` on CustomResourceDefinitions and on
+`metrics.k8s.io`; `list` on `pods/log`; and every read of
+`controllerrevisions`, `podtemplates`, `volumeattachments`, `csidrivers`,
+`csinodes`, `csistoragecapacities` and `events.k8s.io` events.
+
+The console itself loses nothing. **Under `serverProfile=false`, the shell in
+the pod runs with this role too**, and these stop working there:
+
+- `kubectl get -w`, `kubectl rollout status`, `kubectl wait`, and anything
+  built on a watch or an informer;
+- `kubectl replace`, `kubectl apply --force`, and anything else that sends an
+  update;
+- `kubectl scale` (the `scale` subresource);
+- `kubectl attach`;
+- `kubectl rollout history` and `kubectl rollout undo` on StatefulSets and
+  DaemonSets (`controllerrevisions`);
+- `kubectl top pod NAME` and `kubectl top node NAME` (`get` on
+  `metrics.k8s.io`); the unnamed forms list, and still work;
+- `kubectl get crd NAME`; `kubectl get crd` still lists.
+
+If that shell needs them, bind a role of your own to the release's
+ServiceAccount. The chart will not grant what the console does not ask for.
+
 ## What it deploys
 
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
@@ -353,11 +381,29 @@ it is not. Locally, with the console checked out beside this repository:
 python test/derive-needs.py --core ../kubetower
 ```
 
+**It is a best-effort check, not a proof.** It reads Go as text, with
+patterns. It refuses every client call, raw path, dynamic call and watch it
+cannot classify, rather than skipping it, and its self-test feeds it lines a
+change could add and requires each to fail. But a request hidden behind
+indirection it cannot follow can still pass. The role is held to the list
+exactly; the list is held to the console only as well as that scan reads it.
+
+**A known limit: owner links to kinds the console does not list.** The drawer
+follows an object's owner reference to any kind the cluster serves, and reads
+it with `get`. The role grants `get` only on the kinds the console lists, so a
+link to any other kind answers 403. The kinds 0.2.0 granted and 0.3.0 does not
+(`controllerrevisions`, `podtemplates`, `volumeattachments`, the CSI kinds) own
+nothing in practice, so this is a difference on paper rather than one you
+should meet.
+
 ## The server profile
 
 `serverProfile` passes `--incluster` to the console, and it is **on by
 default**. It **removes** routes; it adds nothing. `--set serverProfile=false`
-deploys the desktop profile instead, shell included.
+deploys the desktop profile instead, with its local shell, and that shell runs
+kubectl as the release's ServiceAccount with only the role above - see
+[Upgrading to 0.3.0](#to-030-the-role-grants-only-what-the-console-asks-for)
+for what that role does not allow.
 
 | | off | on (default) |
 |---|---|---|
@@ -381,21 +427,6 @@ single-page handler — **so a `200` there is the removal working, not failing.*
 And the control that makes the rest mean anything: `/api/c/<cluster>/ws/exec`
 answers `400 namespace and pod must be Kubernetes names`, from its own handler.
 The 404s are the router holding nothing, not the surface being down. `kubectl exec` is then the only shell into the pod, bounded by
-**It is a best-effort check, not a proof.** It reads Go as text, with
-patterns. It refuses every client call, raw path, dynamic call and watch it
-cannot classify, rather than skipping it, and its self-test feeds it lines a
-change could add and requires each to fail. But a request hidden behind
-indirection it cannot follow can still pass. The role is held to the list
-exactly; the list is held to the console only as well as that scan reads it.
-
-**A known limit: owner links to kinds the console does not list.** The drawer
-follows an object's owner reference to any kind the cluster serves, and reads
-it with `get`. The role grants `get` only on the kinds the console lists, so a
-link to any other kind answers 403. The kinds 0.2.0 granted and 0.3.0 does not
-(`controllerrevisions`, `podtemplates`, `volumeattachments`, the CSI kinds) own
-nothing in practice, so this is a difference on paper rather than one you
-should meet.
-
 your RBAC rather than by the console's own switches.
 
 **Turning it on does not change who the cluster sees.** It makes the console
