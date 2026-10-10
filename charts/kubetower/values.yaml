@@ -7,19 +7,21 @@
 # `serverProfile: true` below passes `--incluster`, which removes the local
 # shell, the node shell and the assistant. Setting it false deploys the desktop
 # profile on a machine that happens to be a pod, shell included. Neither
-# setting makes it a shared multi-user console: the binary still has no per-user
-# identity and no in-cluster client of its own (`InClusterConfig` appears in no
-# non-test file). Everything that follows from that:
+# setting makes it a shared multi-user console: the binary still has no
+# per-user identity towards the cluster and no in-cluster client of its own
+# (`InClusterConfig` appears in no non-test file). Everything that follows
+# from that:
 #
 #   * With no identity provider: one password, one session, one identity.
 #     There are no users. With `auth.oidc` set, people sign in as themselves
 #     and each gets a session of their own - but see the next point, which
 #     holds either way.
 #   * Everything the console does, it does **as this pod's ServiceAccount**,
-#     not as whoever signed in. The console does not yet ask the cluster
-#     whether a person may do a thing, so whatever RBAC you grant below, you
-#     grant to every person who can sign in - through the password or through
-#     the identity provider alike.
+#     not as whoever signed in, and the cluster's audit log says so. With
+#     `auth.oidc` set, it first asks the cluster whether the person may read
+#     or change the thing and refuses when they may not, so the RBAC below is
+#     a ceiling and each person gets what their own RoleBindings grant. The
+#     password names nobody: whatever RBAC you grant below, its holder gets.
 #   * The port-forward cap is per-process. `forwardPorts` is shared by
 #     everybody at once, not per person.
 #   * Revoking access means changing the password and restarting, which signs
@@ -232,12 +234,11 @@ auth:
   # a group reaches a right through a RoleBinding the cluster's owner writes.
   #
   # **Everybody the provider will issue a token to for this client is
-  # admitted, with the pod's full rights.** The console keeps no list of who
-  # may sign in, and until it asks the cluster what each person may do, every
-  # one of them acts as the pod's ServiceAccount - which, with the default
-  # readSecrets, reads every Secret in the cluster. Restrict who may use this
-  # client at the provider: an application assignment, a group condition on
-  # the client, or a provider that knows only the people meant to get in.
+  # admitted.** The console keeps no list of who may sign in, so each of them
+  # gets whatever the cluster's RBAC grants them, including what it grants
+  # `system:authenticated`, up to the pod's own role. Restrict who may use
+  # this client at the provider: an application assignment, a group condition
+  # on the client, or a provider that knows only the people meant to get in.
   oidc:
     # The provider's identity, and the exact string every token's `iss` must
     # equal. The browser is sent to the authorization endpoint its discovery
@@ -274,6 +275,29 @@ auth:
     # (empty = groups).
     usernameClaim: ""
     groupsClaim: ""
+
+    # Prepended to the person's name before the console checks their rights,
+    # logs it or stores it - kube-apiserver's --oidc-username-prefix, with the
+    # same default and the same spelling of "none":
+    #
+    #   ""        the issuer followed by `#` (https://idp.example/dex#CiQw...),
+    #             except when the claim is `email`, which stays bare
+    #   "-"       no prefix at all, typed out on purpose
+    #   anything  that string, as it is
+    #
+    # **A RoleBinding names the prefixed string.** With the default and a claim
+    # other than `email`, a RoleBinding written for the bare claim matches
+    # nobody; NOTES and the console's start-up log say which string it is. That
+    # default is the --oidc-* flags'. A cluster configured through structured
+    # authentication has none: set this to its claimMappings.username.prefix
+    # for one RoleBinding to mean the same person to kubectl and to the
+    # console - and set usernameClaim to the API server's claim too, since
+    # its --oidc-username-claim defaults to `sub` and the console's to `email`.
+    # Quote the value in a values file: an unquoted `-` or `oidc:` does not
+    # parse, and anything after ` #` is a comment. A prefix that would start
+    # with `system:` is refused by the console at start-up. Needs a console
+    # image that knows KT_OIDC_USERNAME_PREFIX; an older one ignores it.
+    usernamePrefix: ""
 
     # Prepended to every group before the console asserts it, like
     # kube-apiserver's --oidc-groups-prefix. A name, never a permission.
