@@ -3,10 +3,10 @@
     python test/rbac-check.py             # check the chart
     python test/rbac-check.py --self-test # prove the check can fail, then check
 
-A hand-written ClusterRole drifts the first time a page is added, and it drifts
-towards a `*`. This is the part of that problem which can be asserted
-mechanically: not *is every rule needed* - nothing here can know that - but
-*does any rule carry one of the few grants that make every other rule moot*.
+The role is rendered from charts/kubetower/console-needs.yaml, and
+test/console-needs-check.py holds it to exactly that list. This asks what that
+cannot: whether a line in the list - added for a page, in good faith - carries
+one of the few grants that make every other rule moot.
 
 Three rules, and the third is the one with a real exception in it.
 

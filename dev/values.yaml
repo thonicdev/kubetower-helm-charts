@@ -1,0 +1,59 @@
+# Values for developing the console in a local cluster: Docker Desktop's
+# Kubernetes, a console image built from a checkout of
+# https://github.com/thonicdev/kubetower, and the Dex fixture in
+# test/oidc/dex.yaml as its identity provider, applied as it is.
+#
+#   kubectl apply -f test/oidc/dex.yaml
+#   kubectl -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
+#   helm upgrade --install kubetower ./charts/kubetower \
+#     --namespace kubetower --create-namespace -f dev/values.yaml
+#   kubectl -n kubetower port-forward svc/kubetower 8824:5823
+#   # then http://127.0.0.1:8824
+#
+# Sign in either way: through Dex (pick Mock for a groups claim, or Email with
+# alice@example.com / password), or with the shared account, admin / password.
+#
+# **Never anywhere else.** Every credential here is public - in this file and
+# in the fixture - so a console installed with them lets in anybody who can
+# reach it. chart.yml renders the chart with this file and checks that it
+# agrees with the fixture, so the two cannot drift apart unnoticed.
+
+# Built locally and never pulled: Docker Desktop's node sees the daemon's
+# images, so `docker build -t kubetower:dev .` in the console's checkout is the
+# whole delivery. Nothing named kubetower:dev exists in any registry.
+image:
+  repository: kubetower
+  tag: dev
+  pullPolicy: Never
+
+# The profile the chart installs by default, said again so this file reads as
+# the whole environment.
+serverProfile: true
+
+auth:
+  # bcrypt of "password", the fixture's own static users' hash, so there is one
+  # development password to remember rather than one drawn into a log.
+  passwordHash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+  # Fixed, so a rebuilt image or a restarted pod does not sign you out.
+  sessionSecret: "kubetower-development-only-session-key"
+  # The shared password beside single sign-on, which the chart refuses by
+  # default: in development, the way in when Dex is not running.
+  localAccount: true
+  oidc:
+    # The fixture's issuer, which the host and the cluster both resolve. See the
+    # top of test/oidc/dex.yaml for why it is this address.
+    issuer: http://host.docker.internal:5556/dex
+    clientID: kubetower
+    # The console through the port-forward above; the fixture registers it.
+    redirectURL: http://127.0.0.1:8824/api/auth/oidc/callback
+    # Dex sends the groups claim only when asked for `groups`.
+    scopes: "openid,email,profile,groups"
+    groupsPrefix: "oidc:"
+
+# The fixture's client secret, which is public. A real install reads the
+# secret from a Secret it names (auth.oidc.clientSecret.existingSecret), so
+# that `helm get values` never prints it; here there is nothing to hide, and
+# setting it directly keeps this environment to one file and the fixture.
+extraEnv:
+  - name: KT_OIDC_CLIENT_SECRET
+    value: kubetower-dev-secret

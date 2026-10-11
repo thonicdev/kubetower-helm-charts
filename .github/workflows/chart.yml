@@ -56,6 +56,18 @@ jobs:
             --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
             --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true
 
+      # The development environment's values, dev/values.yaml, lint, render,
+      # and agree with the Dex fixture they are written for: its issuer, its
+      # client and that client's secret and redirect. Two files describing one
+      # environment drift apart quietly, and every way they do looks the same in
+      # a browser - a sign-in that fails. --self-test first: it changes one
+      # thing at a time on the real render and fails unless each is refused.
+      - name: The development values render, and agree with the Dex fixture
+        run: |
+          set -o pipefail
+          helm lint ./charts/kubetower -f dev/values.yaml
+          python test/dev-values-check.py --self-test
+
       # The username prefix is passed as it is, or not at all. Unset must leave
       # the variable out, so the console applies kube-apiserver's default; `-`
       # is the console's own spelling of "no prefix" and must arrive as `-`,
@@ -432,7 +444,7 @@ jobs:
           renders $oidc --set auth.oidc.issuer=system:idp
 
   rbac:
-    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants what the console asks for
+    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants exactly what the console asks for
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -442,14 +454,141 @@ jobs:
       # if it does not. A checker nobody has seen fail is a checker nobody knows
       # is connected.
       - run: python test/rbac-check.py --self-test
-      # The other direction: every request in test/console-needs.yaml - what
-      # the console asks the cluster for, with the source file of each - is
-      # granted when its switch is on, and nothing behind an off-by-default
-      # switch is granted by the defaults. A control the console offers and
-      # the role refuses answers 403 for every person, whatever their own
-      # RoleBindings say. --self-test first, for the reason above.
-      - name: the role grants what the console asks for
-        run: python test/console-needs-check.py --self-test
+      # The role is rendered from charts/kubetower/console-needs.yaml - what the
+      # console asks the cluster for, with the source file of each. For every
+      # combination of switches, the role must grant each request whose switch
+      # is on and nothing else: a control the role refuses answers 403 for
+      # every person, whatever their own RoleBindings say, and a grant nobody
+      # asks for is held by everybody who signs in. And the defaults grant
+      # nothing behind an off-by-default switch. --self-test first, for the
+      # reason above.
+      - name: the role grants exactly what the console asks for
+        run: |
+          set -o pipefail
+          python test/console-needs-check.py --self-test
+      # And the list against the console's own source, at the commit the list
+      # names: every request the source makes is in the list, and every line of
+      # the list is a request it makes. Fetched by that commit, so this answers
+      # for the list as committed and a change in the console does not turn an
+      # unrelated pull request red; moving the commit is a change to the list.
+      #
+      # The console's repository must be readable from here for this to run.
+      # Where it is not, the step says NOT RUN - in the log, as a warning and in
+      # the run's summary - rather than failing for something no change here
+      # could fix, or passing as if it had compared anything. Locally, with a
+      # checkout of the console beside this one:
+      #   python test/derive-needs.py --core ../kubetower
+      - name: the list is what the console's source asks for
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -o pipefail
+          read -r url commit < <(python -c '
+          import yaml
+          d = yaml.safe_load(open("charts/kubetower/console-needs.yaml"))["derivedFrom"]
+          print(d["repository"], d["commit"])' | tr -d '\r')
+          [ -n "$url" ] && [ -n "$commit" ] || { echo "console-needs.yaml names no derivedFrom repository and commit"; exit 1; }
+          # Bounded: an unreadable repository must answer, not hang the job.
+          if ! timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1; then
+            sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
+            echo "::warning::NOT RUN: $url is not readable from this workflow, so console-needs.yaml was not compared with the console's source at $commit"
+            echo "**Derivation NOT RUN**: $url is not readable from this workflow; console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git init -q "$RUNNER_TEMP/core"
+          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
+          git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
+          python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
+
+  # The release path, without the release. release.yml runs
+  # .github/scripts/publish-chart.sh on a chart tag against ghcr.io; this runs
+  # the same script against a registry living only for this job, so a release
+  # takes no step that CI has not taken. Nothing leaves the runner.
+  publish:
+    name: the chart packages, pushes, and comes back identical
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2.8.3
+        ports: ["5000:5000"]
+    steps:
+      # Pinned as release.yml pins them; the history is for the main-branch check.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.3
+          token: ""
+      # First the refusals, which must stop a release before anything is
+      # pushed: a tag that is not the chart's version; while appVersion is the
+      # placeholder, any tag at all; on a pull request, a commit that is not on
+      # main; and a role derived from another console commit than the
+      # console's tag v<appVersion>, or a console tag that cannot be read. The
+      # last two run on a copy of the chart with a real-looking appVersion and
+      # a console repository made here, since no console is released yet.
+      - name: what a release must refuse before it pushes, is refused
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -o pipefail
+          refused() {
+            want="$1"; shift
+            if out=$(bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without saying why: $out"; exit 1; }
+            echo "refused ($want): $*"
+          }
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          app=$(sed -n 's/^appVersion:[[:space:]]*//p' charts/kubetower/Chart.yaml | tr -d '"')
+          local=oci://localhost:5000/charts
+          refused "the tag is kubetower-0.0.0-not-this" kubetower-0.0.0-not-this "$local" --plain-http --allow-placeholder
+          if [ "$app" = 0.0.0-dev ]; then
+            refused "appVersion is the 0.0.0-dev placeholder" "kubetower-$version" "$local" --plain-http
+          fi
+          if [ "$EVENT" = pull_request ]; then
+            refused "is not on origin/main" "kubetower-$version" "$local" --plain-http --allow-placeholder --on-branch origin/main
+          fi
+          copy=$RUNNER_TEMP/tie
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" tag v9.9.9
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
+            refused "could not be read" "kubetower-$version" "$local" --plain-http
+      - name: package, push to the job's registry, pull back, compare and render
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder
+      # A published version is never replaced: the same publish again must be
+      # refused, and the registry must still hold the first.
+      - name: publishing the same version again is refused
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          if out=$(bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder 2>&1); then
+            echo "NOT REFUSED: a second publish of $version"; printf '%s\n' "$out"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF "is already published" || { echo "refused without saying why: $out"; exit 1; }
+          echo "a second publish of $version is refused"
+      # As release.yml reads it after logging out: with no login at all. The
+      # job's registry has no authentication, so here this proves the script,
+      # not a package's visibility.
+      - name: the chart reads back with no login
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower "$version" --plain-http
+          if bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower 0.0.0-never-pushed --plain-http; then
+            echo "NOT REFUSED: a version nobody pushed read back"; exit 1
+          fi
+          echo "a version nobody pushed is refused"
 
   persistence:
     name: the console is told whether its state survives, and a drawn password needs it

@@ -7,7 +7,10 @@
 # `serverProfile: true` below passes `--incluster`, which reads this pod's own
 # ServiceAccount and removes the local shell, the node shell and the assistant.
 # Setting it false deploys the desktop profile on a machine that happens to be
-# a pod, shell included. What holds under either profile:
+# a pod, with its local shell - a shell that runs kubectl as this pod's
+# ServiceAccount, limited to the role below, which grants only what the console
+# asks for: no watch, no update, no scale subresource, no attach (see the
+# README, "Upgrading to 0.3.0"). What holds under either profile:
 #
 #   * With no identity provider: one password and one shared account - the
 #     password names nobody. With `auth.oidc` set, people sign in as
@@ -130,8 +133,10 @@ serviceAccount:
 # RBAC - what the pod's ServiceAccount may do
 # ---------------------------------------------------------------------------
 #
-# Read-only, cluster-wide, by default. Every rule is there because a page in
-# the console reads it; templates/rbac.yaml names which page beside each one.
+# Read-only, cluster-wide, by default. The role is rendered from
+# console-needs.yaml, beside this file: every request the console makes, the
+# switch below that grants it, and the source file that makes it. A grant that
+# is not a line there does not exist.
 #
 # One rule is always there, whatever the switches say: `create` on
 # subjectaccessreviews, so the console can check each person's rights before
@@ -144,11 +149,11 @@ serviceAccount:
 rbac:
   create: true
 
-  # get/list/watch on the built-in kinds the console lists. This is what makes
-  # it useful and is safe to leave on - with the caveat that it includes
-  # `secrets`, because the Config > Secrets page and the Helm release list both
-  # read them. If that is not acceptable, set readSecrets: false and accept
-  # that those two pages report a denial.
+  # get and list on the built-in kinds the console lists - never watch, which
+  # it does not use. This is what makes it useful and is safe to leave on -
+  # with the caveat that it includes `secrets`, because the Config > Secrets
+  # page and the Helm release list both read them. If that is not acceptable,
+  # set readSecrets: false and accept that those two pages report a denial.
   #
   # **Every Secret includes this release's own**, which holds the session key
   # and any password hash. Anybody who can sign in can read the key from the
@@ -168,11 +173,12 @@ rbac:
   # deliberately.
   customResources: false
 
-  # create/update/patch/delete on workloads and config. Off. With this on, the
-  # console's edit and delete buttons work, and so do its actions: restart,
-  # scale, suspend and resume, trigger a CronJob, cordon, uncordon and drain a
-  # node (`patch` on nodes), and evict a pod (`create` on pods/eviction) - for
-  # everyone who can sign in, up to their own RoleBindings with single sign-on.
+  # create, patch and delete on workloads and config - never update, which the
+  # console does not send. Off. With this on, the console's edit and delete
+  # buttons work, and so do its actions: restart, scale, suspend and resume,
+  # trigger a CronJob, cordon, uncordon and drain a node (`patch` on nodes),
+  # and evict a pod (`create` on pods/eviction) - for everyone who can sign
+  # in, up to their own RoleBindings with single sign-on.
   #
   # **Treat it as cluster-admin.** It grants `create` on pods, Secrets and
   # ServiceAccounts in every namespace. A pod can run as any ServiceAccount in

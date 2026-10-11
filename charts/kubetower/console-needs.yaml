@@ -1,0 +1,204 @@
+# What the console asks the cluster for, request by request, and the switch in
+# values.yaml that grants it.
+#
+# **The ClusterRole is rendered from this file.** templates/rbac.yaml reads it
+# and writes one rule per switch, API group and verb set, so a grant that is not
+# a line here does not exist, and a line here is granted whenever its switch is
+# on. To change what the role grants, change this file.
+#
+# Read from the console's source in https://github.com/thonicdev/kubetower at
+# the commit below. `source` is the file that makes the request, or that decides
+# how it is reviewed. Each verb is the request's own RBAC verb: a list or a
+# get is `list` or `get`, a merge patch is `patch`, an eviction is `create` on
+# pods/eviction, a GET through a proxy is `get` on the proxy subresource.
+#
+# Three checks hold this file to the console and the role to this file:
+#
+#   test/derive-needs.py         reads the console's source and fails when it
+#                                makes a request missing here, or when a line
+#                                here is a request it never makes - a
+#                                best-effort scan of Go as text; its header
+#                                says what it can miss
+#   test/console-needs-check.py  renders the role with each switch and fails
+#                                when it grants a line less or a grant more
+#   test/rbac-check.py           refuses escalation verbs and stray wildcards
+#
+# What the console never asks for, and the role therefore never grants:
+#
+#   watch     the console polls; nothing in it opens a watch
+#   update    every write is a merge patch, a create, a delete or an eviction
+#   */scale   scaling is a merge patch on the workload itself
+#   */status  nothing reads or writes a status subresource on its own
+#   pods/attach
+#             nothing attaches to a running container
+#   nodes/stats, nodes/metrics
+#             the kubelet's figures are read through nodes/proxy only
+#
+# One verb is here although the console's own review asks only for `create`:
+# `get` on pods/exec and pods/portforward. The console opens both as a
+# WebSocket first, and a WebSocket upgrade is a GET, which the API server
+# authorises as `get` on the subresource - and, from Kubernetes 1.30, as
+# `create` as well. Without `get`, the shell and the port-forward fail on
+# every version.
+#
+# **Writes are a choice, not a derivation.** The console's editor and its
+# Delete reach any kind it can show. The kinds under rbac.write are the ones
+# this chart lets it write; test/derive-needs.py checks that each is a kind the
+# console lists and each verb one it writes with, not that every kind is here.
+#
+# `group` is the API group, "" for the core group.
+
+derivedFrom:
+  repository: https://github.com/thonicdev/kubetower
+  commit: 70b0ec76f904eaa3440d717390310fa39d8b27e2
+
+needs:
+  # Asked before every write, exec and forward, about the person signed in. A
+  # question and not a grant: the answer is the cluster's own RBAC, and a review
+  # changes nothing. What it does reveal is what any user or group may do, which
+  # is what `kubectl auth can-i --as` tells an administrator and what the Access
+  # Control pages already show from the bindings. The shared password account
+  # asks about the console itself, in a SelfSubjectAccessReview, which needs no
+  # rule: Kubernetes' own system:basic-user role grants it to everybody.
+  - {switch: always, group: authorization.k8s.io, resource: subjectaccessreviews, verbs: [create], source: "internal/access/kube.go"}
+
+  # The list pages, one per kind (internal/resources/kinds.go and fetch.go), and
+  # the drawer's get of one object of any of them (internal/detail/detail.go).
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
+  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: events, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumes, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: replicationcontrollers, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: serviceaccounts, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: resourcequotas, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: limitranges, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: configmaps, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: apps, resource: deployments, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: apps, resource: daemonsets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  # Also the rollout history (internal/changes/changes.go).
+  - {switch: rbac.read, group: apps, resource: replicasets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go; internal/changes/changes.go"}
+  - {switch: rbac.read, group: batch, resource: jobs, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: batch, resource: cronjobs, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: ingresses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: ingressclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: networking.k8s.io, resource: networkpolicies, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: discovery.k8s.io, resource: endpointslices, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: autoscaling, resource: horizontalpodautoscalers, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: policy, resource: poddisruptionbudgets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: scheduling.k8s.io, resource: priorityclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: node.k8s.io, resource: runtimeclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: coordination.k8s.io, resource: leases, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: admissionregistration.k8s.io, resource: mutatingwebhookconfigurations, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: admissionregistration.k8s.io, resource: validatingwebhookconfigurations, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  # The Access Control pages. Reading RBAC is reading who can do what; it is not
+  # itself a grant, and a console that cannot show it cannot answer the question
+  # people open it for.
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: roles, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterroles, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: rolebindings, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterrolebindings, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: storage.k8s.io, resource: storageclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  # The CRD list, which is how the console knows what custom resources exist and
+  # which columns to render. Reading the definitions does not grant reading the
+  # objects; that is rbac.customResources below.
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [list], source: "internal/customresources/customresources.go"}
+
+  # Secrets, and this is the line to think about before the others.
+  #
+  # Two things need it: the Config > Secrets list, and the Helm release list,
+  # which is a list of Secrets of type helm.sh/release.v1 and has no other
+  # implementation. The drawer reads the key names a container's envFrom pulls
+  # in, never the values (internal/detail/envfrom.go).
+  #
+  # It is cluster-wide read of every Secret in the cluster, this release's own
+  # included. Set rbac.readSecrets=false to drop it; those two pages then report
+  # a denial, which is at least an honest one. It applies only with rbac.read.
+  - {switch: rbac.readSecrets, group: "", resource: secrets, verbs: [get, list], source: "internal/resources/fetch.go; internal/helm/helm.go; internal/detail/envfrom.go"}
+
+  # The CPU and memory columns. Answers only where metrics-server is installed;
+  # where it is not, the console says "no metrics backend", which is a different
+  # fact from being refused. Lists only: nothing asks for one object's figures.
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], source: "internal/metrics/usage.go; internal/metrics/container.go; internal/overview/metrics.go"}
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: nodes, verbs: [list], source: "internal/metrics/usage.go"}
+
+  # Every custom resource in the cluster, read-only.
+  #
+  # A wildcard, because it has to be: the console renders whatever CRDs the
+  # cluster serves, discovered at runtime, and a fixed list cannot name a kind
+  # installed tomorrow. It is get and list and nothing else - but it is still
+  # "read every object of every kind", which includes any CRD that stores a
+  # credential in its spec. Off by default for that reason. test/rbac-check.py
+  # permits exactly this wildcard and no other.
+  - {switch: rbac.customResources, group: "*", resource: "*", verbs: [get, list], source: "internal/customresources/customresources.go"}
+
+  # Writes. The drawer's manifest editor (a merge patch, internal/edit), the
+  # create and Delete controls, and the actions in internal/actions: restart and
+  # scale patch the workload, suspend and resume patch the CronJob, trigger
+  # creates a Job. Every one leaves through internal/edit/door.go, reviewed
+  # first.
+  #
+  # Granted to the pod, therefore the ceiling for everybody who signs in. The API
+  # server's audit log attributes every change to this ServiceAccount; the
+  # console's own log names the person behind each one when they signed in
+  # through single sign-on, and names nobody for the shared password.
+  #
+  # **Treat it as cluster-admin.** It grants `create` on pods, Secrets and
+  # ServiceAccounts in every namespace, and a pod can run as any ServiceAccount
+  # in its namespace.
+  - {switch: rbac.write, group: "", resource: pods, verbs: [create, patch, delete], source: "internal/actions/needs.go (delete, restart of a pod); internal/edit"}
+  - {switch: rbac.write, group: "", resource: services, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: configmaps, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: secrets, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: persistentvolumeclaims, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: serviceaccounts, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: "", resource: replicationcontrollers, verbs: [create, patch, delete], source: "internal/actions/actions.go (scale); internal/edit"}
+  # Cordon, uncordon and drain set spec.unschedulable with a patch on the node. A
+  # patch on a node can also change its labels and taints - where workloads may
+  # be scheduled - which is no more than the rest of this switch amounts to.
+  - {switch: rbac.write, group: "", resource: nodes, verbs: [patch], source: "internal/actions/needs.go (cordon, uncordon, drain)"}
+  # Evict, and the second half of a drain: an Eviction posted to each pod, which
+  # a PodDisruptionBudget can refuse - unlike a delete.
+  - {switch: rbac.write, group: "", resource: pods/eviction, verbs: [create], source: "internal/actions/needs.go (evict, drain); internal/edit/door.go"}
+  - {switch: rbac.write, group: apps, resource: deployments, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart, scale); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: statefulsets, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart, scale); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: daemonsets, verbs: [create, patch, delete], source: "internal/actions/needs.go (restart); internal/edit"}
+  - {switch: rbac.write, group: apps, resource: replicasets, verbs: [create, patch, delete], source: "internal/actions/actions.go (scale); internal/edit"}
+  - {switch: rbac.write, group: batch, resource: jobs, verbs: [create, patch, delete], source: "internal/actions/needs.go (trigger); internal/edit"}
+  - {switch: rbac.write, group: batch, resource: cronjobs, verbs: [create, patch, delete], source: "internal/actions/needs.go (suspend, resume); internal/edit"}
+  - {switch: rbac.write, group: networking.k8s.io, resource: ingresses, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: networking.k8s.io, resource: networkpolicies, verbs: [create, patch, delete], source: "internal/edit"}
+  - {switch: rbac.write, group: autoscaling, resource: horizontalpodautoscalers, verbs: [create, patch, delete], source: "internal/edit"}
+
+  # A shell in any pod, and a socket to any pod's port.
+  #
+  # This is the switch that turns a viewer into a way into the cluster. The
+  # console's terminal runs as this ServiceAccount, and what travels through a
+  # port-forward may be anything at all. Both are true of everybody who can sign
+  # in. The port-forward is also the metrics layer's fallback route to
+  # Prometheus (internal/metrics/tunnel.go) when rbac.prometheusProxy is off or
+  # the service proxy is refused. `get` is the WebSocket upgrade's verb; see the
+  # top of this file.
+  - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create, get], source: "internal/terminal/exec.go"}
+  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
+
+  # Prometheus, through the API server's service proxy
+  # (/api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The console only
+  # reads.
+  #
+  # Unnarrowed, it is a proxy to every Service in the cluster, not only
+  # Prometheus - GET requests only, but to any HTTP endpoint that trusts the
+  # cluster network. The chart cannot know where Prometheus runs, so the
+  # narrowing is yours: rbac.prometheusProxyServices names the Services, in the
+  # `<name>:<port>` form the console requests, as resourceNames.
+  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, source: "internal/metrics/prom.go"}
+
+  # The kubelet's own stats API, through the API server's node proxy. It is a
+  # proxy to every kubelet on every node - a far wider capability than the page
+  # that uses it needs to imply.
+  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], source: "internal/kubeletstats/kubeletstats.go"}

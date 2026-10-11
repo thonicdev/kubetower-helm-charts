@@ -1,0 +1,128 @@
+# Publish the chart, on a chart tag.
+#
+# A tag `kubetower-<version>` packages charts/kubetower and pushes it as an OCI
+# artefact to ghcr.io/thonicdev/charts, from which it installs with no clone:
+#
+#   helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <version>
+#
+# What it refuses, and where: .github/scripts/publish-chart.sh refuses, before
+# anything is pushed, a tag that disagrees with Chart.yaml's version, a commit
+# that is not on main, the placeholder appVersion, a role derived from another
+# console commit than the console's tag v<appVersion>, and a version the
+# registry already holds. Then it pulls the chart back and compares it byte for
+# byte. After the login is gone, .github/scripts/read-chart-anonymously.sh
+# reads it once more as a stranger would. chart.yml runs both scripts on every
+# pull request against a throwaway registry, so the release's steps have run
+# before a tag ever does.
+#
+# Two jobs, so that the one holding `packages: write` runs nothing it did not
+# have to: the checks, which install a Python package, run in `checks` with a
+# read-only token; `publish` installs nothing, and every action in it is pinned
+# to a commit.
+#
+# The tag is pushed by a person. Nothing here creates one.
+name: release
+
+on:
+  push:
+    tags: ["kubetower-*"]
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+# One release of a given tag at a time, never cancelled half-way through a push.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: the role is what the console asks for, and the tag is on main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # setup-helm's `token` input defaults to the job's token, which it no
+      # longer needs; it gets none.
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.3
+          token: ""
+      - run: pip install pyyaml
+      - name: The tagged commit is on main
+        run: |
+          set -o pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_SHA is not on main - a chart is published only from a merged commit"; exit 1; }
+      - name: The role is what the console asks for, and carries no escalation
+        run: |
+          set -o pipefail
+          python test/rbac-check.py --self-test
+          python test/console-needs-check.py --self-test
+
+  publish:
+    name: package and push the chart, then read it back anonymously
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The one write: pushing the package to ghcr.io under this organisation.
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The same Helm as chart.yml's publish job. No token: this job's token
+      # can write packages, and the action does not need it.
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.3
+          token: ""
+
+      # The registry credential goes into the file HELM_REGISTRY_CONFIG names,
+      # under the runner's temporary directory, and is removed whatever
+      # happens - not into the home directory, where it would outlive the job.
+      - name: Log in to ghcr.io
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -o pipefail
+          mkdir -p "$(dirname "$HELM_REGISTRY_CONFIG")"
+          printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+
+      - name: Package, push, and read it back
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          bash .github/scripts/publish-chart.sh "$TAG" oci://ghcr.io/thonicdev/charts --on-branch origin/main \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out and remove the credential
+        if: always()
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry/config.json
+        run: |
+          set -o pipefail
+          helm registry logout ghcr.io || true
+          rm -rf "$(dirname "$HELM_REGISTRY_CONFIG")"
+
+      # The read-back above was made logged in, so it passes for a package only
+      # its owners can read. This one has no login. On the first release a
+      # new package may start private: the step then fails and says to make it
+      # public, which is the signal, not a flake.
+      - name: Read it back with no login
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          bash .github/scripts/read-chart-anonymously.sh oci://ghcr.io/thonicdev/charts/kubetower "${TAG#kubetower-}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

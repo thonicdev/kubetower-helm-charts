@@ -4,9 +4,12 @@ Helm charts for deploying [KubeTower](https://github.com/thonicdev/kubetower)
 into a Kubernetes cluster.
 
 **Not a release yet.** The console's release workflow publishes an image for
-each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and no version
-has been tagged yet; there is no chart repository either. You install from this
-checkout, naming the image version (or your own build). Everything below says
+each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and this
+repository's publishes the chart for each chart tag, at
+`oci://ghcr.io/thonicdev/charts/kubetower`. Neither has been tagged yet: the
+first chart waits for the first console release, since a chart naming no
+released image installs nothing. Until then you install from this checkout,
+naming the image version (or your own build). Everything below says
 what it does and what it does not, because the gap between those two is the
 whole point of reading a chart.
 
@@ -15,7 +18,10 @@ whole point of reading a chart.
 | Path | What |
 |---|---|
 | `charts/kubetower/` | The console in a pod |
+| `charts/kubetower/console-needs.yaml` | What the console asks the cluster for, request by request. The `ClusterRole` is rendered from it |
+| `dev/values.yaml` | The values a development install in a local cluster uses, with the fixture below |
 | `test/oidc/` | A Dex fixture for developing single sign-on against. Not part of the chart |
+| `.github/workflows/release.yml` | Publishes the chart on a tag `kubetower-<version>` |
 
 ## The one sentence that matters
 
@@ -169,12 +175,71 @@ helm install kubetower ./charts/kubetower \
 Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
 prints all three commands with your values filled in.
 
+Once a chart version is published, the same install needs no clone:
+
+```bash
+helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <chart version> \
+  --namespace kubetower --create-namespace
+```
+
+## Publishing
+
+A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
+`.github/scripts/publish-chart.sh`. Before anything is pushed it refuses:
+
+- a tag that is not the version in `Chart.yaml`;
+- a tagged commit that is not on `main`;
+- the placeholder `appVersion`;
+- a role read from another console than the one the chart installs: the
+  console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
+  derived from, read from the console's repository;
+- a version the registry already holds. A published version is never
+  replaced; bump the chart's version instead.
+
+Then it packages the chart, pushes it to `oci://ghcr.io/thonicdev/charts`, pulls
+it back, checks it is byte for byte what was pushed, and renders it. After the
+registry login is gone, `.github/scripts/read-chart-anonymously.sh` reads it
+once more with no login, so a package nobody else can read fails the release
+instead of the first install. `chart.yml` runs both scripts on every pull
+request against a registry that lives only for the job, and proves each
+refusal, so a release takes no step CI has not taken. The job holding the
+package token installs nothing and runs only actions pinned to a commit.
+Nobody has pushed a tag yet.
+
 ## Upgrading
 
 Upgrade with `helm upgrade --reset-then-reuse-values` (Helm 3.14 or later), or
 pass your values file again with `-f`. Plain `--reuse-values` keeps only the
 values the previous release stored, so any key a newer chart adds is missing,
 and the render comes out wrong or fails.
+
+### To 0.3.0: the role grants only what the console asks for
+
+The `ClusterRole` is rendered from `charts/kubetower/console-needs.yaml` (see
+[RBAC](#rbac)), and an upgrade removes every grant the console never uses:
+`watch`; `update`; the `*/scale` and `*/status` subresources; `pods/attach`;
+`nodes/stats` and `nodes/metrics`; `get` on CustomResourceDefinitions and on
+`metrics.k8s.io`; `list` on `pods/log`; and every read of
+`controllerrevisions`, `podtemplates`, `volumeattachments`, `csidrivers`,
+`csinodes`, `csistoragecapacities` and `events.k8s.io` events.
+
+The console itself loses nothing. **Under `serverProfile=false`, the shell in
+the pod runs with this role too**, and these stop working there:
+
+- `kubectl get -w`, `kubectl rollout status`, `kubectl wait`, and anything
+  built on a watch or an informer;
+- `kubectl replace`, `kubectl apply --force`, and anything else that sends an
+  update;
+- `kubectl scale` (the `scale` subresource);
+- `kubectl attach`;
+- `kubectl rollout history` and `kubectl rollout undo` on StatefulSets and
+  DaemonSets (`controllerrevisions`);
+- `kubectl top pod NAME` and `kubectl top node NAME` (`get` on
+  `metrics.k8s.io`); the unnamed forms list, and still work;
+- `kubectl get crd NAME`; `kubectl get crd` still lists.
+
+If that shell needs them, bind a role of your own to the release's
+ServiceAccount. The chart will not grant what the console does not ask for.
 
 ## What it deploys
 
@@ -252,9 +317,22 @@ false`.
 
 ### RBAC
 
-Read-only, cluster-wide, by default — derived from what the code reads, not from
-`cluster-admin` and not from the built-in `view` role, which excludes Secrets,
-which the Secrets page and the Helm release list both need.
+Read-only, cluster-wide, by default — rendered from what the console asks for,
+not from `cluster-admin` and not from the built-in `view` role, which excludes
+Secrets, which the Secrets page and the Helm release list both need.
+
+`charts/kubetower/console-needs.yaml` lists every request the console makes:
+its API group, resource and verbs, the switch below that grants it, and the
+file in [the console's source](https://github.com/thonicdev/kubetower) that
+makes it. `templates/rbac.yaml` writes that list out as rules and adds nothing,
+so a grant that is not a line there does not exist. That is why the role has no
+`watch` (the console polls), no `update` (every write is a merge patch, a
+create, a delete or an eviction), no `*/scale` or `*/status`, no `pods/attach`,
+and no `nodes/stats` or `nodes/metrics` (the kubelet's figures come through
+`nodes/proxy`). The one verb the console's own review does not name is `get`
+on `pods/exec` and `pods/portforward`: both open as a WebSocket, which is a GET
+the API server authorises as `get` - and, from Kubernetes 1.30, as `create`
+too.
 
 One rule is not read-only and is always there: `create` on
 `subjectaccessreviews`, which lets the console check each person's rights
@@ -285,21 +363,47 @@ session key and mint a session of their own.
 all it checks: it passes with every switch on, so a green run says nothing about
 whether the switches you chose are safe.
 
-`test/console-needs-check.py` checks the other direction: every request in
-`test/console-needs.yaml` - what the console asks the cluster for, each with
-the source file in the console's repository it comes from - is granted when
-its switch is on, and the off-by-default switches grant nothing when off. The
-list is kept by hand, so it catches a grant that goes missing, not a request
-the console starts making that nobody added to it.
+`test/console-needs-check.py` holds the role to the list: for each switch, and
+for every switch on and every switch off, the rendered role must grant each
+request whose switch is on and nothing else, and the defaults nothing behind an
+off-by-default switch.
 
-`charts/kubetower/templates/rbac.yaml` names the source file each rule exists
-for.
+`test/derive-needs.py` holds the list to the console: it reads the console's Go
+source at the commit the list names and fails when the source makes a request
+the list lacks, or the list names one the source never makes. Writes are the
+exception, by design: the editor reaches any kind the console lists, so the
+kinds `rbac.write` grants are this chart's choice, and the check only asks that
+each be a kind the console lists and a verb it writes with. CI runs it wherever
+the console's repository is readable from the workflow, and says NOT RUN where
+it is not. Locally, with the console checked out beside this repository:
+
+```bash
+python test/derive-needs.py --core ../kubetower
+```
+
+**It is a best-effort check, not a proof.** It reads Go as text, with
+patterns. It refuses every client call, raw path, dynamic call and watch it
+cannot classify, rather than skipping it, and its self-test feeds it lines a
+change could add and requires each to fail. But a request hidden behind
+indirection it cannot follow can still pass. The role is held to the list
+exactly; the list is held to the console only as well as that scan reads it.
+
+**A known limit: owner links to kinds the console does not list.** The drawer
+follows an object's owner reference to any kind the cluster serves, and reads
+it with `get`. The role grants `get` only on the kinds the console lists, so a
+link to any other kind answers 403. The kinds 0.2.0 granted and 0.3.0 does not
+(`controllerrevisions`, `podtemplates`, `volumeattachments`, the CSI kinds) own
+nothing in practice, so this is a difference on paper rather than one you
+should meet.
 
 ## The server profile
 
 `serverProfile` passes `--incluster` to the console, and it is **on by
 default**. It **removes** routes; it adds nothing. `--set serverProfile=false`
-deploys the desktop profile instead, shell included.
+deploys the desktop profile instead, with its local shell, and that shell runs
+kubectl as the release's ServiceAccount with only the role above - see
+[Upgrading to 0.3.0](#to-030-the-role-grants-only-what-the-console-asks-for)
+for what that role does not allow.
 
 | | off | on (default) |
 |---|---|---|
@@ -386,6 +490,28 @@ name: people signed in under the old one sign in again, and RoleBindings
 written for it match nobody. The value needs a console image that knows
 `KT_OIDC_USERNAME_PREFIX`; an older one ignores it.
 
+## A development install
+
+`dev/values.yaml` is the environment a console under development runs in, on
+Docker Desktop's Kubernetes: the server profile, the fixture below as identity
+provider, the shared account beside it (`admin` / `password`), and a
+`kubetower:dev` image built from a checkout of the console and never pulled.
+Every credential in it is public; it is for a laptop and nothing else.
+
+```bash
+# in a checkout of the console
+docker build --build-arg KT_VERSION=dev -t kubetower:dev .
+# here
+kubectl apply -f test/oidc/dex.yaml
+kubectl -n dex port-forward svc/dex 5556:5556 --address 0.0.0.0
+helm upgrade --install kubetower ./charts/kubetower \
+  --namespace kubetower --create-namespace -f dev/values.yaml
+kubectl -n kubetower port-forward svc/kubetower 8824:5823   # then http://127.0.0.1:8824
+```
+
+`chart.yml` renders the chart with this file and fails if it stops agreeing with
+the fixture: the issuer, the client, its secret and the redirect it registers.
+
 ## The OIDC fixture
 
 `test/oidc/` is a [Dex](https://dexidp.io), for developing single sign-on
@@ -436,8 +562,9 @@ discovery from, and the issuer stays what the browser sees.
 
 ## What this chart does not do
 
-- No chart repository and no `helm package`. The image is published per
-  console release; the chart is not.
+- No published chart yet, and no `helm repo add`. The chart is published as
+  an OCI artefact, which `helm install oci://...` reads directly; the first
+  version waits for the first console release.
 - No per-person identity towards the cluster. With `auth.oidc` set, the
   console asks the cluster what each person may do before acting, but the
   request itself is the pod's ServiceAccount's, so the API server's audit log
