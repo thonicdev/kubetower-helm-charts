@@ -126,6 +126,18 @@ jobs:
           check '10.244.0.0/16'             --set 'auth.trustedProxies={10.244.0.0/16}'
           check '10.244.0.0/16,192.0.2.10'  --set 'auth.trustedProxies={10.244.0.0/16,192.0.2.10}'
           check '10.0.0.0/8,fd00::/8'       --set-string 'auth.trustedProxies=10.0.0.0/8 fd00::/8'
+          check '10.0.0.0/8,fd00::/8'       --set-string "auth.trustedProxies=10.0.0.0/8$(printf '\t')fd00::/8"
+          # One entry per line, as a block scalar in a values file: the
+          # console splits on commas and spaces only, so the newlines must not
+          # reach it.
+          printf 'auth:\n  trustedProxies: |\n    10.0.0.0/8\n    fd00::/8\n\n    192.0.2.10\n' > "$RUNNER_TEMP/proxies-block.yaml"
+          check '10.0.0.0/8,fd00::/8,192.0.2.10' -f "$RUNNER_TEMP/proxies-block.yaml"
+          # extraEnv setting KT_TRUSTED_PROXIES as well wins, and the chart's
+          # own entry is left out: one entry, not two.
+          both="--set auth.trustedProxies={10.0.0.0/8} --set extraEnv[0].name=KT_TRUSTED_PROXIES --set extraEnv[0].value=192.0.2.1"
+          n=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci $both | grep -c 'name: KT_TRUSTED_PROXIES')
+          [ "$n" = 1 ] || { echo "with extraEnv as well: $n KT_TRUSTED_PROXIES entries, want 1"; exit 1; }
+          check '192.0.2.1' $both
           if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.trustedProxies=true 2>&1); then
             echo "NOT REFUSED: a boolean auth.trustedProxies"; exit 1
           fi

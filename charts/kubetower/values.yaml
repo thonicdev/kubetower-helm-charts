@@ -389,8 +389,10 @@ auth:
   localAccount: false
 
   # The proxies whose X-Forwarded-For the console believes for **password
-  # sign-in**: addresses or CIDR ranges, as a list (or one string, separated
-  # by commas). Rendered as KT_TRUSTED_PROXIES, and absent while this is empty.
+  # sign-in**: addresses or CIDR ranges, as a list, or one string separated by
+  # commas, spaces or newlines (a block scalar with one entry per line works).
+  # Rendered as KT_TRUSTED_PROXIES, and absent while this is empty - or while
+  # extraEnv sets KT_TRUSTED_PROXIES itself, which then wins.
   #
   # **It matters only when password sign-in is on and the console sits behind
   # an ingress** - password sign-in is on with no `oidc.issuer`, or with
@@ -402,16 +404,26 @@ auth:
   # at start. Naming the ingress controller here gives each client its own
   # budget and puts the client's address in the log.
   #
-  # Put the **ingress controller's pod address range** here - the range its
-  # pods' addresses come from, usually the cluster's pod CIDR, or the nodes'
-  # range for a controller on hostNetwork. Name only proxies you run: an
-  # address listed here can claim to be any client.
+  # **Name the ingress controller's own addresses, and nothing else.** The
+  # console believes X-Forwarded-For from any connecting address this list
+  # covers, so each of them can claim to be any client: pick its own attempt
+  # budget, and choose which address the failure log names. Name the
+  # controller's pods as narrowly as your network allows.
+  #
+  # **A wide range - the cluster's whole pod CIDR - is safe only together with
+  # `networkPolicy.enabled: true` and `networkPolicy.consoleFrom` narrowed to
+  # the ingress controller's namespace**, on a network plugin that enforces
+  # NetworkPolicy. Without that policy, any pod that can reach the console's
+  # Service can write the header. A controller on hostNetwork connects from the
+  # nodes' addresses, and naming the nodes' range trusts everything running
+  # with host networking on any node, which no NetworkPolicy narrows.
   #
   # With single sign-on and `localAccount: false` (the default once an issuer
-  # is set) there is no password sign-in, and this has no effect. An entry that
-  # is neither an address nor a CIDR range stops the console at start, naming
-  # the entry.
-  #   trustedProxies: ["10.244.0.0/16"]
+  # is set) there is no password sign-in: the console does not read this at
+  # all, so it has no effect, and a malformed entry goes unnoticed. With
+  # password sign-in on, an entry that is neither an address nor a CIDR range
+  # stops the console at start, naming the entry.
+  #   trustedProxies: ["10.244.0.0/16"]   # the pod CIDR: only with the policy above
   trustedProxies: []
 
 # ---------------------------------------------------------------------------
