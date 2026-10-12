@@ -35,8 +35,10 @@
 #     checked and was not, so it stops here, with git's answer shown;
 #   - but NOT the missing-credential answer itself. While the console's
 #     repository is private, a run holding no credential for it is answered
-#     "could not read Username" (or HTTP 401/403), and this repository holds
-#     no credential on purpose. The tie then cannot be checked, so it is not
+#     "could not read Username" (HTTP 401 with no credential to offer), and
+#     this repository holds no credential on purpose. Only that answer: a 403,
+#     or a credential offered and rejected ("Authentication failed"), is not
+#     the state this job runs in, and is refused like any other failure. The tie then cannot be checked, so it is not
 #     claimed: the run warns, names the commit the role was derived from, and
 #     publishes. The warning goes to the log, to an annotation in GitHub
 #     Actions, and to the job summary through release.yml. Whoever pushes the
@@ -114,12 +116,14 @@ if [ "$app" = 0.0.0-dev ]; then
 else
   derived=$(sed -n 's/^[[:space:]]*commit:[[:space:]]*//p' "$chart/console-needs.yaml" | head -n1)
   [ -n "$derived" ] || { echo "REFUSED: $chart/console-needs.yaml names no derivedFrom commit" >&2; exit 1; }
-  if ! refs=$(GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/v$app" "refs/tags/v$app^{}" 2>&1); then
+  # LC_ALL=C keeps git's answer in one language. The line matched below is
+  # not translated by git today; this keeps it so.
+  if ! refs=$(LC_ALL=C GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/v$app" "refs/tags/v$app^{}" 2>&1); then
     # Only the missing-credential answer is let through. Anything else - DNS,
     # a 5xx, a rate limit, the 60 s timeout (exit 124, often with no output) -
     # is a check that could have run, so it refuses rather than publishing a
     # version that can never be taken back.
-    if ! printf '%s\n' "$refs" | grep -qiE 'could not read (Username|Password)|Authentication failed|requested URL returned error: 40[13]'; then
+    if ! printf '%s\n' "$refs" | grep -qE 'could not read (Username|Password)'; then
       echo "REFUSED: the console's tag v$app could not be read from $console, and the answer was not the missing-credential one, so this release could have been checked and was not. Run it again once the console's repository answers. git said:" >&2
       printf '%s\n' "${refs:-(nothing; the read was stopped after 60 s)}" | sed 's/^/    /' >&2
       exit 1

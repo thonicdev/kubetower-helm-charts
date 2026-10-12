@@ -68,7 +68,7 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
    for what is safe to name).
 {{- end }}
 {{- end }}
-{{- if and (include "kubetower.trustedProxiesInExtraEnv" .) .Values.auth.trustedProxies }}
+{{- if and (include "kubetower.trustedProxiesInExtraEnv" .) (include "kubetower.trustedProxiesParsed" .) }}
 
    auth.trustedProxies is IGNORED: extraEnv sets KT_TRUSTED_PROXIES as well,
    and the extraEnv entry wins. Remove one of them.

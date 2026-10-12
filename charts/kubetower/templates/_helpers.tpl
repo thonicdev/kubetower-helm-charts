@@ -236,6 +236,12 @@ a patch Helm cannot apply cleanly.
 */}}
 {{- define "kubetower.trustedProxies" -}}
 {{- if not (include "kubetower.trustedProxiesInExtraEnv" .) -}}
+{{- include "kubetower.trustedProxiesParsed" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/* auth.trustedProxies parsed as above, whatever extraEnv says. */}}
+{{- define "kubetower.trustedProxiesParsed" -}}
 {{- $v := .Values.auth.trustedProxies -}}
 {{- $raw := list -}}
 {{- if kindIs "string" $v -}}
@@ -252,7 +258,6 @@ a patch Helm cannot apply cleanly.
 {{- end -}}
 {{- end -}}
 {{- join "," $out -}}
-{{- end -}}
 {{- end -}}
 
 {{/* "true" when extraEnv names KT_TRUSTED_PROXIES itself, otherwise empty. */}}

@@ -571,9 +571,10 @@ jobs:
       # main; and a role derived from another console commit than the
       # console's tag v<appVersion>, or a readable console repository with no
       # such tag, or one that cannot be read for any reason but a missing
-      # credential, or an appVersion that is not a semantic version. The last two run on a copy of the chart with a real-looking
-      # appVersion and console repositories made here, so that they do not
-      # depend on what the real console has tagged.
+      # credential, or an appVersion that is not a semantic version. The cases
+      # about the console run on a copy of the chart with a real-looking
+      # appVersion, against console repositories and a server made here, so
+      # that they do not depend on what the real console has tagged.
       - name: what a release must refuse before it pushes, is refused
         env:
           EVENT: ${{ github.event_name }}
@@ -612,17 +613,24 @@ jobs:
             refused "the console has no tag v9.9.9" "kubetower-$version" "$local" --plain-http
           # A console repository that cannot be read for any reason but a
           # missing credential is refused: a missing repository, a server
-          # error (test/git-http-fixture.py answers 500 outside /auth/), and a
-          # name that does not resolve. Each is a release that could have
-          # been checked.
+          # error and a 403 (test/git-http-fixture.py answers 403 under
+          # /forbidden/ and 500 outside /auth/), and a name that does not
+          # resolve. Each is a release that could have been checked. The
+          # fixture cases also assert the status git reported, so a fixture
+          # that never started cannot pass them as "connection refused".
           python3 test/git-http-fixture.py 8765 & fixture=$!
           trap 'kill $fixture' EXIT
           for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8765/ || { echo "the git fixture did not start"; exit 1; }
           not_auth="the answer was not the missing-credential one"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
             refused "$not_auth" "kubetower-$version" "$local" --plain-http
-          CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/fail/console \
-            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          for code in 500:fail 403:forbidden; do
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "$not_auth" "kubetower-$version" "$local" --plain-http
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "returned error: ${code%%:*}" "kubetower-$version" "$local" --plain-http
+          done
           CHART_DIR=$copy/chart CONSOLE_REPO=https://console.invalid/kubetower \
             refused "$not_auth" "kubetower-$version" "$local" --plain-http
           # And an appVersion that is not a semantic version, even where the
@@ -650,6 +658,7 @@ jobs:
           python3 test/git-http-fixture.py 8766 & fixture=$!
           trap 'kill $fixture' EXIT
           for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8766/ || { echo "the git fixture did not start"; exit 1; }
           # Lines are shown behind "| " so that the script's own annotation is
           # read here, as text, rather than raised again by this job.
           publishes() {

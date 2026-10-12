@@ -358,8 +358,8 @@ A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
 **One answer is a warning, not a refusal: the missing-credential one.** While
 `thonicdev/kubetower` is private, this public repository's release holds no
 credential for it, deliberately, so GitHub answers "could not read Username"
-(or 401/403), and the tie between the role and the console cannot be
-checked. The release then says so - a warning annotation, and a line in the
+(a 401 with nothing to offer), and the tie between the role and the console
+cannot be checked. A 403, or a credential offered and rejected, is refused. The release then says so - a warning annotation, and a line in the
 run's summary naming `derivedFrom.commit` as committed - and publishes. It
 never reports that case as checked. Until the console is public, whoever pushes
 the chart tag makes that check by hand: `derivedFrom.commit` must be the commit
