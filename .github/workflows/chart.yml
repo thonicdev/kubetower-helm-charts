@@ -630,7 +630,7 @@ jobs:
           printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
           git init -q "$copy/console"
           git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
-          git -C "$copy/console" tag -a v9.9.9 -m v9.9.9
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid tag -a v9.9.9 -m v9.9.9
           head=$(git -C "$copy/console" rev-parse HEAD)
           sed -i "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
