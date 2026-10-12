@@ -220,3 +220,47 @@ true
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+auth.trustedProxies as KT_TRUSTED_PROXIES: the entries joined by commas, or
+nothing when there are none. A list, or one string. Every entry, a list's
+included, is split on commas and any whitespace - spaces, tabs and the
+newlines of a block scalar with one entry per line - because the console
+splits on commas and spaces only and refuses the rest. Empty pieces are
+dropped, so `--set auth.trustedProxies=""` means none rather than an entry
+the console would refuse.
+
+Empty as well when extraEnv sets KT_TRUSTED_PROXIES itself: extraEnv wins, as
+it does for GOMEMLIMIT, since two entries of one name in a container's env is
+a patch Helm cannot apply cleanly.
+*/}}
+{{- define "kubetower.trustedProxies" -}}
+{{- if not (include "kubetower.trustedProxiesInExtraEnv" .) -}}
+{{- include "kubetower.trustedProxiesParsed" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/* auth.trustedProxies parsed as above, whatever extraEnv says. */}}
+{{- define "kubetower.trustedProxiesParsed" -}}
+{{- $v := .Values.auth.trustedProxies -}}
+{{- $raw := list -}}
+{{- if kindIs "string" $v -}}
+{{- $raw = list $v -}}
+{{- else if $v -}}
+{{- $raw = $v -}}
+{{- end -}}
+{{- $out := list -}}
+{{- range $raw -}}
+{{- range regexSplit "[\\s,]+" (toString .) -1 -}}
+{{- with . -}}
+{{- $out = append $out . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $out -}}
+{{- end -}}
+
+{{/* "true" when extraEnv names KT_TRUSTED_PROXIES itself, otherwise empty. */}}
+{{- define "kubetower.trustedProxiesInExtraEnv" -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "KT_TRUSTED_PROXIES" }}true{{ end }}{{ end -}}
+{{- end -}}

@@ -193,6 +193,13 @@ spec:
             - name: KT_AUTH_LOCAL_ACCOUNT
               value: "true"
             {{- end }}
+            {{- with include "kubetower.trustedProxies" . }}
+            # Whose X-Forwarded-For password sign-in believes: the ingress
+            # controller's addresses (auth.trustedProxies). Unset, every
+            # attempt behind an ingress counts as coming from the ingress.
+            - name: KT_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
             - name: KT_FORWARD_PORTS
               value: {{ .Values.forwardPorts | quote }}
             {{- if .Values.readonlyClusters }}

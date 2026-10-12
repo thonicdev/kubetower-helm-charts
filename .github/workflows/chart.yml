@@ -54,7 +54,8 @@ jobs:
             --set auth.oidc.discoveryURL=http://dex.dex.svc:5556/dex \
             --set auth.oidc.groupsClaim=groups --set auth.oidc.usernameClaim=email \
             --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
-            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true
+            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true \
+            --set "auth.trustedProxies={10.244.0.0/16}"
 
       # The development environment's values, dev/values.yaml, lint, render,
       # and agree with the Dex fixture they are written for: its issuer, its
@@ -98,6 +99,50 @@ jobs:
           check '-'        --set auth.oidc.usernamePrefix=-
           check 'oidc:'    --set auth.oidc.usernamePrefix=oidc:
           check 'https://idp.example/dex#' --set-string 'auth.oidc.usernamePrefix=https://idp.example/dex#'
+
+      # The trusted proxies reach the console only when there are some. Unset
+      # must leave the variable out (the console's own default, none); a list
+      # and a string both arrive as the comma-separated form the console reads;
+      # an empty string is none, not one empty entry the console would refuse.
+      - name: The trusted proxies reach the console only when they are set
+        run: |
+          set -o pipefail
+          proxies() {
+            helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if e["name"] == "KT_TRUSTED_PROXIES"]
+          print(env[0]["value"] if env else "<absent>")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(proxies "$@")
+            [ "$got" = "$want" ] || { echo "with '$*': want $want, got $got"; exit 1; }
+            echo "with '${*:-nothing set}': $got"
+          }
+          check '<absent>'
+          check '<absent>'                  --set-string 'auth.trustedProxies='
+          check '10.244.0.0/16'             --set 'auth.trustedProxies={10.244.0.0/16}'
+          check '10.244.0.0/16,192.0.2.10'  --set 'auth.trustedProxies={10.244.0.0/16,192.0.2.10}'
+          check '10.0.0.0/8,fd00::/8'       --set-string 'auth.trustedProxies=10.0.0.0/8 fd00::/8'
+          check '10.0.0.0/8,fd00::/8'       --set-string "auth.trustedProxies=10.0.0.0/8$(printf '\t')fd00::/8"
+          # One entry per line, as a block scalar in a values file: the
+          # console splits on commas and spaces only, so the newlines must not
+          # reach it.
+          printf 'auth:\n  trustedProxies: |\n    10.0.0.0/8\n    fd00::/8\n\n    192.0.2.10\n' > "$RUNNER_TEMP/proxies-block.yaml"
+          check '10.0.0.0/8,fd00::/8,192.0.2.10' -f "$RUNNER_TEMP/proxies-block.yaml"
+          # extraEnv setting KT_TRUSTED_PROXIES as well wins, and the chart's
+          # own entry is left out: one entry, not two.
+          both="--set auth.trustedProxies={10.0.0.0/8} --set extraEnv[0].name=KT_TRUSTED_PROXIES --set extraEnv[0].value=192.0.2.1"
+          n=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci $both | grep -c 'name: KT_TRUSTED_PROXIES')
+          [ "$n" = 1 ] || { echo "with extraEnv as well: $n KT_TRUSTED_PROXIES entries, want 1"; exit 1; }
+          check '192.0.2.1' $both
+          if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.trustedProxies=true 2>&1); then
+            echo "NOT REFUSED: a boolean auth.trustedProxies"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q 'auth.trustedProxies' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a boolean auth.trustedProxies is refused, naming it"
 
       # `helm lint` does not parse what it renders; it can pass on a template
       # that produces invalid YAML. This is the parse.
@@ -524,9 +569,12 @@ jobs:
       # pushed: a tag that is not the chart's version; while appVersion is the
       # placeholder, any tag at all; on a pull request, a commit that is not on
       # main; and a role derived from another console commit than the
-      # console's tag v<appVersion>, or a console tag that cannot be read. The
-      # last two run on a copy of the chart with a real-looking appVersion and
-      # a console repository made here, since no console is released yet.
+      # console's tag v<appVersion>, or a readable console repository with no
+      # such tag, or one that cannot be read for any reason but a missing
+      # credential, or an appVersion that is not a semantic version. The cases
+      # about the console run on a copy of the chart with a real-looking
+      # appVersion, against console repositories and a server made here, so
+      # that they do not depend on what the real console has tagged.
       - name: what a release must refuse before it pushes, is refused
         env:
           EVENT: ${{ github.event_name }}
@@ -557,10 +605,87 @@ jobs:
           git init -q "$copy/console"
           git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
           git -C "$copy/console" tag v9.9.9
+          git init -q "$copy/untagged"
+          git -C "$copy/untagged" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "no release"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
             refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/untagged \
+            refused "the console has no tag v9.9.9" "kubetower-$version" "$local" --plain-http
+          # A console repository that cannot be read for any reason but a
+          # missing credential is refused: a missing repository, a server
+          # error and a 403 (test/git-http-fixture.py answers 403 under
+          # /forbidden/ and 500 outside /auth/), and a name that does not
+          # resolve. Each is a release that could have been checked. The
+          # fixture cases also assert the status git reported, so a fixture
+          # that never started cannot pass them as "connection refused".
+          python3 test/git-http-fixture.py 8765 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8765/ || { echo "the git fixture did not start"; exit 1; }
+          not_auth="the answer was not the missing-credential one"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
-            refused "could not be read" "kubetower-$version" "$local" --plain-http
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          for code in 500:fail 403:forbidden; do
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "$not_auth" "kubetower-$version" "$local" --plain-http
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "returned error: ${code%%:*}" "kubetower-$version" "$local" --plain-http
+          done
+          CHART_DIR=$copy/chart CONSOLE_REPO=https://console.invalid/kubetower \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          # And an appVersion that is not a semantic version, even where the
+          # tag could not have been read: a letter O for a zero.
+          cp -r "$copy/chart" "$copy/typo"
+          sed -i 's/^appVersion: .*/appVersion: "0.1.O"/' "$copy/typo/Chart.yaml"
+          CHART_DIR=$copy/typo CONSOLE_REPO=http://127.0.0.1:8765/auth/console \
+            refused "which is not a semantic version" "kubetower-$version" "$local" --plain-http
+      # The console's repository can be private while this one is public, and
+      # this repository holds no credential for it, so a release is answered
+      # "could not read Username". That answer, and only that one, is warned
+      # about and published, never reported as tied; test/git-http-fixture.py
+      # gives it under /auth/ (401). And the readable case still ties:
+      # a tag that is the derivedFrom commit publishes, and says it was checked.
+      # Each publishes the chart copy to a path of the job's registry of its
+      # own, so the real chart's push below is not "already published".
+      - name: a console that wants a credential warns and publishes, and a matching tag publishes as tied
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          copy=$RUNNER_TEMP/tie-published
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          python3 test/git-http-fixture.py 8766 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8766/ || { echo "the git fixture did not start"; exit 1; }
+          # Lines are shown behind "| " so that the script's own annotation is
+          # read here, as text, rather than raised again by this job.
+          publishes() {
+            want="$1"; shift
+            if ! out=$(GITHUB_ACTIONS=true bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              printf '%s\n' "$out" | sed 's/^/| /'; echo "NOT PUBLISHED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | sed 's/^/| /'
+            printf '%s\n' "$out" | grep -q '^published kubetower' || { echo "no publish line"; exit 1; }
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "published without saying: $want"; exit 1; }
+          }
+          CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8766/auth/console \
+            publishes "the role is NOT tied to the console: its tag v9.9.9 could not be read" \
+            "kubetower-$version" oci://localhost:5000/unreadable --plain-http
+          printf '%s\n' "$out" | grep -q 'could not read Username' || { echo "the warning path was not the missing-credential answer"; exit 1; }
+          printf '%s\n' "$out" | grep -q '^::warning title=Role not tied' || { echo "no annotation for the unreadable tag"; exit 1; }
+          printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid tag -a v9.9.9 -m v9.9.9
+          head=$(git -C "$copy/console" rev-parse HEAD)
+          sed -i "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            publishes "the role is tied to the console: its v9.9.9 is $head" \
+            "kubetower-$version" oci://localhost:5000/tied --plain-http
+          printf '%s\n' "$out" | grep -q '::warning' && { echo "a matching tag raised a warning"; exit 1; }
+          echo "no credential: warned and published; matching annotated tag: published as tied"
       - name: package, push to the job's registry, pull back, compare and render
         run: |
           set -o pipefail
