@@ -270,21 +270,46 @@ first time shares one process-wide queue with whoever floods it. The console
 says so in its log at start.
 
 `auth.trustedProxies` names the proxies whose `X-Forwarded-For` the console
-believes, and is rendered as `KT_TRUSTED_PROXIES`. Put the **ingress
-controller's pod address range** there - usually the cluster's pod CIDR, or
-the nodes' range for a controller on `hostNetwork`:
+believes, and is rendered as `KT_TRUSTED_PROXIES`. **Name the ingress
+controller's own addresses, and nothing else.** The console believes the
+header from any connecting address the list covers, so each of them can claim
+to be any client: it picks its own attempt budget and chooses which address the
+failure log names. Name the controller's pods as narrowly as your network
+allows.
+
+**A wide range, such as the cluster's whole pod CIDR, is safe only together
+with a NetworkPolicy that lets nothing but the ingress controller reach the
+console** - `networkPolicy.enabled` with `consoleFrom` narrowed to the
+controller's namespace, on a network plugin that enforces it. Without that,
+any pod that can reach the console's Service can write the header:
 
 ```yaml
 auth:
-  trustedProxies: ["10.244.0.0/16"]
+  trustedProxies: ["10.244.0.0/16"]   # the pod CIDR, so only with the policy below
+networkPolicy:
+  enabled: true
+  consoleFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
 ```
 
-Name only proxies you run: an address listed there can claim to be any
-client. Empty, the variable is not set. An entry that is neither an address
-nor a CIDR range stops the console at start, naming the entry. With single
-sign-on and no `auth.localAccount`, there is no password sign-in and the value
-has no effect. If you set `KT_TRUSTED_PROXIES` through `extraEnv` before this
-value existed, move it here rather than setting both.
+A controller on `hostNetwork` connects from the nodes' addresses. Naming the
+nodes' range trusts everything that runs with host networking on any node,
+and no NetworkPolicy narrows that.
+
+The value is a list, or one string separated by commas, spaces or newlines.
+Empty, the variable is not set. With password sign-in on, an entry that is
+neither an address nor a CIDR range stops the console at start, naming the
+entry. With single sign-on and no `auth.localAccount` there is no password
+sign-in: the console does not read the value at all, so it has no effect and a
+malformed entry goes unnoticed.
+
+If `extraEnv` sets `KT_TRUSTED_PROXIES` as well, the `extraEnv` entry wins and
+the chart leaves `auth.trustedProxies` out, as it does for `GOMEMLIMIT`: two
+entries of one name in a container's environment do not apply cleanly. NOTES
+says so when both are set. Moving over from `extraEnv` is one upgrade: set
+`auth.trustedProxies` and remove the `extraEnv` entry in the same values.
 
 ### When the audit log stops writing
 
@@ -294,15 +319,19 @@ stalls - the console stops acting: that replica refuses every write, exec,
 forward and reveal, and `/readyz` answers not ready with the reason, so the
 readiness probe takes it out of the Service. **It does not recover inside the
 process.** Fix the cause - a full disk, or a stdout or log pipe that nothing
-drains - and restart it:
+drains - and restart. This restarts every replica of the Deployment:
 
 ```bash
 kubectl -n <namespace> rollout restart deployment/<release>
 ```
 
-`<release>` stands for the Deployment's name: the release name when it
-contains `kubetower`, as in the commands above, `<release>-kubetower`
-otherwise, or `fullnameOverride`. `NOTES.txt` prints the command with the
+and `kubectl -n <namespace> delete pod <pod>` restarts only the one affected.
+
+`<release>` stands for the Deployment's name. It is `fullnameOverride` when
+that is set. Otherwise it is built from the release name and the chart's name,
+which is `nameOverride` when that is set and `kubetower` otherwise: the release
+name alone when it already contains that name, as in the commands above, and
+`<release>-<name>` when it does not. `NOTES.txt` prints the command with the
 name filled in.
 
 ## Publishing
@@ -313,23 +342,32 @@ A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
 - a tag that is not the version in `Chart.yaml`;
 - a tagged commit that is not on `main`;
 - the placeholder `appVersion`;
+- an `appVersion` that is not a semantic version (`MAJOR.MINOR.PATCH`,
+  optionally `-prerelease`): it is the published chart's default image tag;
 - a role read from another console than the one the chart installs: the
   console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
   derived from, read from the console's repository, and a readable repository
   with no such tag is refused too;
+- a console repository that cannot be read for any reason other than a
+  missing credential - a name that does not resolve, a server error, a rate
+  limit, a timeout. Each is a release that could have been checked, and a
+  published version cannot be taken back;
 - a version the registry already holds. A published version is never
   replaced; bump the chart's version instead.
 
-**One check is a warning, not a refusal: a console repository the release
-cannot read at all.** While `thonicdev/kubetower` is private, this public
-repository's release holds no credential for it, deliberately, so the tag
-cannot be read and the tie between the role and the console cannot be
+**One answer is a warning, not a refusal: the missing-credential one.** While
+`thonicdev/kubetower` is private, this public repository's release holds no
+credential for it, deliberately, so GitHub answers "could not read Username"
+(or 401/403), and the tie between the role and the console cannot be
 checked. The release then says so - a warning annotation, and a line in the
 run's summary naming `derivedFrom.commit` as committed - and publishes. It
 never reports that case as checked. Until the console is public, whoever pushes
 the chart tag makes that check by hand: `derivedFrom.commit` must be the commit
 the console's `v<appVersion>` tag names. Once it is public, the tag is readable
-and the equality is enforced again with no change here.
+and the equality is enforced again with no change here. One limit: without a
+credential, GitHub gives the same answer for a repository that does not
+exist, so a typo in the console's URL would also only warn. That URL is a
+constant in `publish-chart.sh`, reviewed like any other line.
 
 Then it packages the chart, pushes it to `oci://ghcr.io/thonicdev/charts`, pulls
 it back, checks it is byte for byte what was pushed, and renders it. After the
@@ -337,7 +375,8 @@ registry login is gone, `.github/scripts/read-chart-anonymously.sh` reads it
 once more with no login, so a package nobody else can read fails the release
 instead of the first install. `chart.yml` runs both scripts on every pull
 request against a registry that lives only for the job, and proves each
-refusal, the unreadable-console warning and a matching tag's tie, so a release
+refusal, the missing-credential warning (from a local server answering 401)
+and a matching tag's tie, so a release
 takes no step CI has not taken. The job holding the
 package token installs nothing and runs only actions pinned to a commit.
 Nobody has pushed a tag yet.
