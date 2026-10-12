@@ -29,14 +29,25 @@
 #     be that commit, read from the console's repository - so a console that
 #     asks for something new cannot ship with a chart whose role refuses it.
 #     A readable repository with no tag v<appVersion> is refused as well;
-#   - but NOT a console repository it cannot read at all. While the console's
-#     repository is private, a run holding no credential for it cannot read
-#     the tag, and this repository holds none on purpose. The tie then cannot
-#     be checked, so it is not claimed: the run warns, names the commit the
-#     role was derived from, and publishes. The warning goes to the log, to an
-#     annotation in GitHub Actions, and to the job summary through
-#     release.yml. Whoever pushes the chart tag is the check in that case:
-#     derivedFrom.commit must be the commit their console tag names;
+#   - a console repository that cannot be read for any reason other than a
+#     missing credential: a name that does not resolve, a server error, a
+#     rate limit, a timeout. Each of those is a release that could have been
+#     checked and was not, so it stops here, with git's answer shown;
+#   - but NOT the missing-credential answer itself. While the console's
+#     repository is private, a run holding no credential for it is answered
+#     "could not read Username" (or HTTP 401/403), and this repository holds
+#     no credential on purpose. The tie then cannot be checked, so it is not
+#     claimed: the run warns, names the commit the role was derived from, and
+#     publishes. The warning goes to the log, to an annotation in GitHub
+#     Actions, and to the job summary through release.yml. Whoever pushes the
+#     chart tag is the check in that case: derivedFrom.commit must be the
+#     commit their console tag names. GitHub gives the same answer for a
+#     repository that does not exist, so a typo in CONSOLE_REPO would look
+#     the same - which is why its default is a constant here, reviewed like
+#     any other line;
+#   - an appVersion that is not a semantic version (MAJOR.MINOR.PATCH, with an
+#     optional -prerelease): while the tag cannot be read it is the only check
+#     appVersion gets, and the published chart's default image tag is it;
 #   - a version the registry already holds. An OCI tag can be moved, so a
 #     re-run, or a tag deleted and pushed again elsewhere, would silently
 #     replace what `--version` resolves to. Only an explicit "not found" from
@@ -89,6 +100,12 @@ if [ -n "$on_branch" ]; then
   fi
 fi
 
+semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+if ! printf '%s\n' "$app" | grep -qE "$semver"; then
+  echo "REFUSED: appVersion is \"$app\", which is not a semantic version (MAJOR.MINOR.PATCH, optionally -prerelease). It is the published chart's default image tag, so a typo would install an image no registry holds" >&2
+  exit 1
+fi
+
 if [ "$app" = 0.0.0-dev ]; then
   if [ "$allow_placeholder" != true ]; then
     echo "REFUSED: appVersion is the 0.0.0-dev placeholder, which names no image; the published chart would refuse to render without image.tag. Set appVersion to a released console version first" >&2
@@ -98,6 +115,15 @@ else
   derived=$(sed -n 's/^[[:space:]]*commit:[[:space:]]*//p' "$chart/console-needs.yaml" | head -n1)
   [ -n "$derived" ] || { echo "REFUSED: $chart/console-needs.yaml names no derivedFrom commit" >&2; exit 1; }
   if ! refs=$(GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/v$app" "refs/tags/v$app^{}" 2>&1); then
+    # Only the missing-credential answer is let through. Anything else - DNS,
+    # a 5xx, a rate limit, the 60 s timeout (exit 124, often with no output) -
+    # is a check that could have run, so it refuses rather than publishing a
+    # version that can never be taken back.
+    if ! printf '%s\n' "$refs" | grep -qiE 'could not read (Username|Password)|Authentication failed|requested URL returned error: 40[13]'; then
+      echo "REFUSED: the console's tag v$app could not be read from $console, and the answer was not the missing-credential one, so this release could have been checked and was not. Run it again once the console's repository answers. git said:" >&2
+      printf '%s\n' "${refs:-(nothing; the read was stopped after 60 s)}" | sed 's/^/    /' >&2
+      exit 1
+    fi
     # Unreadable is not the answer "no such tag" or "another commit": nothing
     # was compared, so the run says so and records the commit it was given.
     tie="the role is NOT tied to the console: its tag v$app could not be read from $console, so nothing shows that tag is $derived, the commit console-needs.yaml was derived from"

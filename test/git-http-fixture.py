@@ -1,0 +1,34 @@
+"""A git HTTP server that answers only with failures, for publish-chart.sh's tests.
+
+    python test/git-http-fixture.py <port>
+
+Under /auth/ it answers 401 with a Basic challenge, which is what a private
+repository answers a client holding no credential: git then says "could not
+read Username ... terminal prompts disabled", the one failure
+publish-chart.sh lets through with a warning. Anything else answers 500,
+standing for every failure that must be refused - a server error here, and in
+the same class a name that does not resolve, a rate limit or a timeout.
+
+It serves no repository at all, binds 127.0.0.1 only, and runs until killed.
+"""
+import http.server
+import sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/auth/"):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="fixture"')
+        else:
+            self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()

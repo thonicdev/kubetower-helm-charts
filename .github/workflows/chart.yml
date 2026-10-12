@@ -558,7 +558,8 @@ jobs:
       # placeholder, any tag at all; on a pull request, a commit that is not on
       # main; and a role derived from another console commit than the
       # console's tag v<appVersion>, or a readable console repository with no
-      # such tag. The last two run on a copy of the chart with a real-looking
+      # such tag, or one that cannot be read for any reason but a missing
+      # credential, or an appVersion that is not a semantic version. The last two run on a copy of the chart with a real-looking
       # appVersion and console repositories made here, so that they do not
       # depend on what the real console has tagged.
       - name: what a release must refuse before it pushes, is refused
@@ -597,14 +598,36 @@ jobs:
             refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/untagged \
             refused "the console has no tag v9.9.9" "kubetower-$version" "$local" --plain-http
+          # A console repository that cannot be read for any reason but a
+          # missing credential is refused: a missing repository, a server
+          # error (test/git-http-fixture.py answers 500 outside /auth/), and a
+          # name that does not resolve. Each is a release that could have
+          # been checked.
+          python3 test/git-http-fixture.py 8765 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          not_auth="the answer was not the missing-credential one"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/fail/console \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=https://console.invalid/kubetower \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          # And an appVersion that is not a semantic version, even where the
+          # tag could not have been read: a letter O for a zero.
+          cp -r "$copy/chart" "$copy/typo"
+          sed -i 's/^appVersion: .*/appVersion: "0.1.O"/' "$copy/typo/Chart.yaml"
+          CHART_DIR=$copy/typo CONSOLE_REPO=http://127.0.0.1:8765/auth/console \
+            refused "which is not a semantic version" "kubetower-$version" "$local" --plain-http
       # The console's repository can be private while this one is public, and
-      # this repository holds no credential for it, so a release may not be able
-      # to read the tag at all. That case is warned about and published, never
-      # refused, and never reported as tied. And the readable case still ties:
+      # this repository holds no credential for it, so a release is answered
+      # "could not read Username". That answer, and only that one, is warned
+      # about and published, never reported as tied; test/git-http-fixture.py
+      # gives it under /auth/ (401). And the readable case still ties:
       # a tag that is the derivedFrom commit publishes, and says it was checked.
       # Each publishes the chart copy to a path of the job's registry of its
       # own, so the real chart's push below is not "already published".
-      - name: an unreadable console warns and publishes, and a matching tag publishes as tied
+      - name: a console that wants a credential warns and publishes, and a matching tag publishes as tied
         run: |
           set -o pipefail
           version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
@@ -612,6 +635,9 @@ jobs:
           mkdir -p "$copy"
           cp -r charts/kubetower "$copy/chart"
           sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          python3 test/git-http-fixture.py 8766 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done
           # Lines are shown behind "| " so that the script's own annotation is
           # read here, as text, rather than raised again by this job.
           publishes() {
@@ -623,9 +649,10 @@ jobs:
             printf '%s\n' "$out" | grep -q '^published kubetower' || { echo "no publish line"; exit 1; }
             printf '%s\n' "$out" | grep -qF -- "$want" || { echo "published without saying: $want"; exit 1; }
           }
-          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
+          CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8766/auth/console \
             publishes "the role is NOT tied to the console: its tag v9.9.9 could not be read" \
             "kubetower-$version" oci://localhost:5000/unreadable --plain-http
+          printf '%s\n' "$out" | grep -q 'could not read Username' || { echo "the warning path was not the missing-credential answer"; exit 1; }
           printf '%s\n' "$out" | grep -q '^::warning title=Role not tied' || { echo "no annotation for the unreadable tag"; exit 1; }
           printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
           git init -q "$copy/console"
@@ -637,7 +664,7 @@ jobs:
             publishes "the role is tied to the console: its v9.9.9 is $head" \
             "kubetower-$version" oci://localhost:5000/tied --plain-http
           printf '%s\n' "$out" | grep -q '::warning' && { echo "a matching tag raised a warning"; exit 1; }
-          echo "unreadable: warned and published; matching annotated tag: published as tied"
+          echo "no credential: warned and published; matching annotated tag: published as tied"
       - name: package, push to the job's registry, pull back, compare and render
         run: |
           set -o pipefail
