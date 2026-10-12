@@ -524,9 +524,10 @@ jobs:
       # pushed: a tag that is not the chart's version; while appVersion is the
       # placeholder, any tag at all; on a pull request, a commit that is not on
       # main; and a role derived from another console commit than the
-      # console's tag v<appVersion>, or a console tag that cannot be read. The
-      # last two run on a copy of the chart with a real-looking appVersion and
-      # a console repository made here, since no console is released yet.
+      # console's tag v<appVersion>, or a readable console repository with no
+      # such tag. The last two run on a copy of the chart with a real-looking
+      # appVersion and console repositories made here, so that they do not
+      # depend on what the real console has tagged.
       - name: what a release must refuse before it pushes, is refused
         env:
           EVENT: ${{ github.event_name }}
@@ -557,10 +558,53 @@ jobs:
           git init -q "$copy/console"
           git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
           git -C "$copy/console" tag v9.9.9
+          git init -q "$copy/untagged"
+          git -C "$copy/untagged" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "no release"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
             refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/untagged \
+            refused "the console has no tag v9.9.9" "kubetower-$version" "$local" --plain-http
+      # The console's repository can be private while this one is public, and
+      # this repository holds no credential for it, so a release may not be able
+      # to read the tag at all. That case is warned about and published, never
+      # refused, and never reported as tied. And the readable case still ties:
+      # a tag that is the derivedFrom commit publishes, and says it was checked.
+      # Each publishes the chart copy to a path of the job's registry of its
+      # own, so the real chart's push below is not "already published".
+      - name: an unreadable console warns and publishes, and a matching tag publishes as tied
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          copy=$RUNNER_TEMP/tie-published
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          # Lines are shown behind "| " so that the script's own annotation is
+          # read here, as text, rather than raised again by this job.
+          publishes() {
+            want="$1"; shift
+            if ! out=$(GITHUB_ACTIONS=true bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              printf '%s\n' "$out" | sed 's/^/| /'; echo "NOT PUBLISHED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | sed 's/^/| /'
+            printf '%s\n' "$out" | grep -q '^published kubetower' || { echo "no publish line"; exit 1; }
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "published without saying: $want"; exit 1; }
+          }
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
-            refused "could not be read" "kubetower-$version" "$local" --plain-http
+            publishes "the role is NOT tied to the console: its tag v9.9.9 could not be read" \
+            "kubetower-$version" oci://localhost:5000/unreadable --plain-http
+          printf '%s\n' "$out" | grep -q '^::warning title=Role not tied' || { echo "no annotation for the unreadable tag"; exit 1; }
+          printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" tag -a v9.9.9 -m v9.9.9
+          head=$(git -C "$copy/console" rev-parse HEAD)
+          sed -i "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            publishes "the role is tied to the console: its v9.9.9 is $head" \
+            "kubetower-$version" oci://localhost:5000/tied --plain-http
+          printf '%s\n' "$out" | grep -q '::warning' && { echo "a matching tag raised a warning"; exit 1; }
+          echo "unreadable: warned and published; matching annotated tag: published as tied"
       - name: package, push to the job's registry, pull back, compare and render
         run: |
           set -o pipefail

@@ -9,11 +9,14 @@
 # anything is pushed, a tag that disagrees with Chart.yaml's version, a commit
 # that is not on main, the placeholder appVersion, a role derived from another
 # console commit than the console's tag v<appVersion>, and a version the
-# registry already holds. Then it pulls the chart back and compares it byte for
-# byte. After the login is gone, .github/scripts/read-chart-anonymously.sh
-# reads it once more as a stranger would. chart.yml runs both scripts on every
-# pull request against a throwaway registry, so the release's steps have run
-# before a tag ever does.
+# registry already holds. When it cannot read the console's repository at all -
+# the case while that repository is private, since this one holds no credential
+# for it - it warns instead, in an annotation and in this run's summary, and
+# publishes with the derivedFrom commit as committed. Then it pulls the chart
+# back and compares it byte for byte. After the login is gone,
+# .github/scripts/read-chart-anonymously.sh reads it once more as a stranger
+# would. chart.yml runs both scripts on every pull request against a throwaway
+# registry, so the release's steps have run before a tag ever does.
 #
 # Two jobs, so that the one holding `packages: write` runs nothing it did not
 # have to: the checks, which install a Python package, run in `checks` with a

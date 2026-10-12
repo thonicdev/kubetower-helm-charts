@@ -28,7 +28,15 @@
 #     the console at `derivedFrom.commit`. The console's tag v<appVersion> must
 #     be that commit, read from the console's repository - so a console that
 #     asks for something new cannot ship with a chart whose role refuses it.
-#     A tag that cannot be read is refused too: the tie is the point;
+#     A readable repository with no tag v<appVersion> is refused as well;
+#   - but NOT a console repository it cannot read at all. While the console's
+#     repository is private, a run holding no credential for it cannot read
+#     the tag, and this repository holds none on purpose. The tie then cannot
+#     be checked, so it is not claimed: the run warns, names the commit the
+#     role was derived from, and publishes. The warning goes to the log, to an
+#     annotation in GitHub Actions, and to the job summary through
+#     release.yml. Whoever pushes the chart tag is the check in that case:
+#     derivedFrom.commit must be the commit their console tag names;
 #   - a version the registry already holds. An OCI tag can be moved, so a
 #     re-run, or a tag deleted and pushed again elsewhere, would silently
 #     replace what `--version` resolves to. Only an explicit "not found" from
@@ -90,17 +98,22 @@ else
   derived=$(sed -n 's/^[[:space:]]*commit:[[:space:]]*//p' "$chart/console-needs.yaml" | head -n1)
   [ -n "$derived" ] || { echo "REFUSED: $chart/console-needs.yaml names no derivedFrom commit" >&2; exit 1; }
   if ! refs=$(GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/v$app" "refs/tags/v$app^{}" 2>&1); then
-    echo "REFUSED: the console's tag v$app could not be read from $console, so the role cannot be tied to the console this chart installs:" >&2
+    # Unreadable is not the answer "no such tag" or "another commit": nothing
+    # was compared, so the run says so and records the commit it was given.
+    tie="the role is NOT tied to the console: its tag v$app could not be read from $console, so nothing shows that tag is $derived, the commit console-needs.yaml was derived from"
+    echo "WARNING: $tie. Publishing anyway, with derivedFrom.commit $derived as committed. The console's repository answered:" >&2
     printf '%s\n' "$refs" | sed 's/^/    /' >&2
-    exit 1
-  fi
-  # An annotated tag's own object, then the commit it points at (^{}): the commit wins.
-  tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app^{}" '$2 == p {print $1}')
-  [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app" '$2 == p {print $1}')
-  [ -n "$tagged" ] || { echo "REFUSED: the console has no tag v$app at $console - appVersion must name a released console" >&2; exit 1; }
-  if [ "$tagged" != "$derived" ]; then
-    echo "REFUSED: the console's v$app is $tagged, and console-needs.yaml was derived from $derived. Re-run test/derive-needs.py at $tagged, move derivedFrom to it, then tag again" >&2
-    exit 1
+    [ "${GITHUB_ACTIONS:-}" != true ] || echo "::warning title=Role not tied to the console's tag::$tie" >&2
+  else
+    # An annotated tag's own object, then the commit it points at (^{}): the commit wins.
+    tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app^{}" '$2 == p {print $1}')
+    [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app" '$2 == p {print $1}')
+    [ -n "$tagged" ] || { echo "REFUSED: the console has no tag v$app at $console - appVersion must name a released console" >&2; exit 1; }
+    if [ "$tagged" != "$derived" ]; then
+      echo "REFUSED: the console's v$app is $tagged, and console-needs.yaml was derived from $derived. Re-run test/derive-needs.py at $tagged, move derivedFrom to it, then tag again" >&2
+      exit 1
+    fi
+    tie="the role is tied to the console: its v$app is $derived, the commit console-needs.yaml was derived from"
   fi
 fi
 
@@ -145,3 +158,4 @@ rules=$(grep -c 'apiGroups:' "$work/role.yaml" || true)
 [ "$rules" -gt 0 ] || { echo "the pulled chart renders a ClusterRole with no rules" >&2; exit 1; }
 
 echo "published $name $version to $repo/$name, digest $digest; pulled back identical, renders a ClusterRole of $rules rules"
+[ -z "${tie:-}" ] || echo "$tie"
