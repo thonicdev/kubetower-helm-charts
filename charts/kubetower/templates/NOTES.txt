@@ -59,6 +59,13 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 {{- else }}
    Everyone who can reach that host needs only the one password below.
 {{- end }}
+{{- if and (or (not .Values.auth.oidc.issuer) .Values.auth.localAccount) (not (include "kubetower.trustedProxies" .)) }}
+
+   Password sign-in is on behind it, and auth.trustedProxies is empty: every
+   attempt counts as coming from the ingress controller, so none is limited
+   per client and failures are logged against the controller. Set
+   auth.trustedProxies to the controller's pod address range.
+{{- end }}
 {{- end }}
 
 2. SIGN IN
@@ -176,7 +183,14 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
    Readiness is {{ .Values.readinessProbe.httpGet.path | default "set in your values" }}.{{ if eq (toString .Values.readinessProbe.httpGet.path) "/readyz" }} It is the console's own judgement: a
    replica goes unready when its clusters stop answering (here, the API server)
    or, in console versions that check it, when its audit log can no longer be
-   written - and leaves the Service until it recovers.{{ end }}
+   written - and leaves the Service while that lasts.{{ end }}
+
+   If the log says the audit log stopped writing, that replica refuses every
+   act and stays not ready on /readyz until it is restarted: it does not
+   recover by itself. Fix the cause (a full disk, or a stdout or log pipe
+   nothing drains), then:
+
+     kubectl --context <your-context> -n {{ .Release.Namespace }} rollout restart deployment/{{ include "kubetower.fullname" . }}
 
 5. BEFORE YOU SHARE THE URL WITH ANYBODY
 

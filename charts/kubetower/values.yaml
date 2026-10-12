@@ -388,6 +388,32 @@ auth:
   # that sets this, which is a deliberate act with a record.
   localAccount: false
 
+  # The proxies whose X-Forwarded-For the console believes for **password
+  # sign-in**: addresses or CIDR ranges, as a list (or one string, separated
+  # by commas). Rendered as KT_TRUSTED_PROXIES, and absent while this is empty.
+  #
+  # **It matters only when password sign-in is on and the console sits behind
+  # an ingress** - password sign-in is on with no `oidc.issuer`, or with
+  # `localAccount: true`. Then every attempt arrives from the ingress
+  # controller's address, so with this empty no attempt can be counted against
+  # the client making it: no per-client budget is kept, every failure is logged
+  # against the ingress, and a browser signing in for the first time shares one
+  # process-wide queue with whoever floods it. The console says so in its log
+  # at start. Naming the ingress controller here gives each client its own
+  # budget and puts the client's address in the log.
+  #
+  # Put the **ingress controller's pod address range** here - the range its
+  # pods' addresses come from, usually the cluster's pod CIDR, or the nodes'
+  # range for a controller on hostNetwork. Name only proxies you run: an
+  # address listed here can claim to be any client.
+  #
+  # With single sign-on and `localAccount: false` (the default once an issuer
+  # is set) there is no password sign-in, and this has no effect. An entry that
+  # is neither an address nor a CIDR range stops the console at start, naming
+  # the entry.
+  #   trustedProxies: ["10.244.0.0/16"]
+  trustedProxies: []
+
 # ---------------------------------------------------------------------------
 # The process
 # ---------------------------------------------------------------------------
@@ -555,7 +581,9 @@ scratchSizeLimits:
 # profile, the API server this pod runs in - and, in console versions that
 # check it, whether its audit log can still be written. A replica that cannot
 # record what people do leaves the Service rather than refusing every action
-# while it stays in it. The chart does not second-guess that judgement: if a
+# while it stays in it. That one does not come back by itself: only a restart
+# clears it, once the cause is fixed (the README's "When the audit log stops
+# writing"). The chart does not second-guess that judgement: if a
 # brief API-server error should not make a replica unready, that is for the
 # console's /readyz to decide, not for the probe to work around.
 #

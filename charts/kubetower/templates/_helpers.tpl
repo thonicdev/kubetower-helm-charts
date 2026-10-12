@@ -220,3 +220,27 @@ true
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+auth.trustedProxies as KT_TRUSTED_PROXIES: the entries joined by commas, or
+nothing when there are none. A list, or one string as the console reads it
+(commas or spaces). Each entry is trimmed and an empty one dropped, so that
+`--set auth.trustedProxies=""` means none rather than an entry the console
+would refuse.
+*/}}
+{{- define "kubetower.trustedProxies" -}}
+{{- $v := .Values.auth.trustedProxies -}}
+{{- $raw := list -}}
+{{- if kindIs "string" $v -}}
+{{- $raw = splitList "," (replace " " "," $v) -}}
+{{- else if $v -}}
+{{- $raw = $v -}}
+{{- end -}}
+{{- $out := list -}}
+{{- range $raw -}}
+{{- with trim (toString .) -}}
+{{- $out = append $out . -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $out -}}
+{{- end -}}

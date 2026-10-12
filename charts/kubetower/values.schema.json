@@ -7,6 +7,11 @@
       "type": "object",
       "properties": {
         "_drawnSessionSecret": false,
+        "trustedProxies": {
+          "$comment": "A list of addresses or CIDR ranges, or one string of them. A map or a boolean would otherwise render as text the console refuses at start, far from the value that caused it.",
+          "type": ["array", "string"],
+          "items": { "type": "string" }
+        },
         "oidc": {
           "type": "object",
           "properties": {

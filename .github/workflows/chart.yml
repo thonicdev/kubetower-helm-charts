@@ -54,7 +54,8 @@ jobs:
             --set auth.oidc.discoveryURL=http://dex.dex.svc:5556/dex \
             --set auth.oidc.groupsClaim=groups --set auth.oidc.usernameClaim=email \
             --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
-            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true
+            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true \
+            --set "auth.trustedProxies={10.244.0.0/16}"
 
       # The development environment's values, dev/values.yaml, lint, render,
       # and agree with the Dex fixture they are written for: its issuer, its
@@ -98,6 +99,38 @@ jobs:
           check '-'        --set auth.oidc.usernamePrefix=-
           check 'oidc:'    --set auth.oidc.usernamePrefix=oidc:
           check 'https://idp.example/dex#' --set-string 'auth.oidc.usernamePrefix=https://idp.example/dex#'
+
+      # The trusted proxies reach the console only when there are some. Unset
+      # must leave the variable out (the console's own default, none); a list
+      # and a string both arrive as the comma-separated form the console reads;
+      # an empty string is none, not one empty entry the console would refuse.
+      - name: The trusted proxies reach the console only when they are set
+        run: |
+          set -o pipefail
+          proxies() {
+            helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if e["name"] == "KT_TRUSTED_PROXIES"]
+          print(env[0]["value"] if env else "<absent>")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(proxies "$@")
+            [ "$got" = "$want" ] || { echo "with '$*': want $want, got $got"; exit 1; }
+            echo "with '${*:-nothing set}': $got"
+          }
+          check '<absent>'
+          check '<absent>'                  --set-string 'auth.trustedProxies='
+          check '10.244.0.0/16'             --set 'auth.trustedProxies={10.244.0.0/16}'
+          check '10.244.0.0/16,192.0.2.10'  --set 'auth.trustedProxies={10.244.0.0/16,192.0.2.10}'
+          check '10.0.0.0/8,fd00::/8'       --set-string 'auth.trustedProxies=10.0.0.0/8 fd00::/8'
+          if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.trustedProxies=true 2>&1); then
+            echo "NOT REFUSED: a boolean auth.trustedProxies"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q 'auth.trustedProxies' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a boolean auth.trustedProxies is refused, naming it"
 
       # `helm lint` does not parse what it renders; it can pass on a template
       # that produces invalid YAML. This is the parse.
