@@ -6,10 +6,12 @@ into a Kubernetes cluster.
 **Not a release yet.** The console's release workflow publishes an image for
 each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and this
 repository's publishes the chart for each chart tag, at
-`oci://ghcr.io/thonicdev/charts/kubetower`. Neither has been tagged yet: the
-first chart waits for the first console release, since a chart naming no
-released image installs nothing. Until then you install from this checkout,
-naming the image version (or your own build). Everything below says
+`oci://ghcr.io/thonicdev/charts/kubetower`. The console has release
+candidates and no release yet, and no chart has been published: the first
+chart waits for the first console release, since a chart naming no released
+image installs nothing. Until then you install from this checkout, naming the
+image version (or your own build); [Install](#install) has both ways, and the
+registry one works unchanged once a chart is published. Everything below says
 what it does and what it does not, because the gap between those two is the
 whole point of reading a chart.
 
@@ -144,14 +146,9 @@ that is the `0.0.0-dev` placeholder **the chart refuses to render without
 in `ImagePullBackOff`.
 
 **The image is private while `thonicdev/kubetower` is**: a package on ghcr.io
-inherits its repository's access. Pulling it then needs a token with
-`read:packages` from somebody who can read that repository:
-
-```bash
-kubectl -n kubetower create secret docker-registry ghcr-pull \
-  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
-# then: --set image.pullSecrets[0].name=ghcr-pull
-```
+inherits its repository's access. Pulling it then needs a pull secret holding
+a token with `read:packages` from somebody who can read that repository;
+[Install](#install) shows both commands.
 
 Or build it yourself and make it reachable from your cluster:
 
@@ -166,21 +163,147 @@ DOCKER_BUILDKIT=1 docker build --build-arg KT_VERSION=helm-test -t kubetower:hel
 
 ## Install
 
+### The chart's version is not the console's
+
+`version` in `Chart.yaml` is the chart's own. It moves whenever the chart
+changes, and it is what `--version` names. `appVersion` is the console release
+that chart version was made for: it is the default `image.tag`, and the
+console whose requests the `ClusterRole` was derived from
+(`console-needs.yaml`). So a chart version installs its `appVersion` unless
+you set `image.tag`. Read both before installing:
+
 ```bash
-helm install kubetower ./charts/kubetower \
-  --namespace kubetower --create-namespace \
-  --set image.tag=<version>
+helm show chart oci://ghcr.io/thonicdev/charts/kubetower --version <chart version>
 ```
 
-Read the drawn password out of the log, port-forward, sign in — `NOTES.txt`
-prints all three commands with your values filled in.
+`image.tag` set to another console version runs that console under this
+chart's role. A newer console may ask the cluster for something the role does
+not grant, and the control that asks then answers 403. Prefer the chart version
+whose `appVersion` is the console you want.
 
-Once a chart version is published, the same install needs no clone:
+### From the registry
+
+The chart is an OCI artefact: `helm install` reads it directly, with no
+`helm repo add` and no clone.
+
+**1. A pull secret, while the image is private.** A classic personal access
+token with the `read:packages` scope, from an account that can read
+`thonicdev/kubetower`, in a Secret of type `kubernetes.io/dockerconfigjson`
+in the release's namespace:
+
+```bash
+kubectl create namespace kubetower
+kubectl -n kubetower create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io --docker-username=<github user> --docker-password=<token>
+```
+
+The chart's value for the pod's `imagePullSecrets` is `image.pullSecrets`.
+
+**2. A values file.** With single sign-on, which the chart is meant to run
+with once more than one person reaches it:
+
+```bash
+# The client secret, only for a confidential client. Never a value in the file.
+kubectl -n kubetower create secret generic kubetower-oidc --from-literal=client-secret=<secret>
+```
+
+```yaml
+# kubetower-values.yaml
+image:
+  # Empty is the chart's appVersion. Required while appVersion is the
+  # 0.0.0-dev placeholder, which names no image.
+  tag: ""
+  pullSecrets:
+    - name: ghcr-pull
+
+auth:
+  oidc:
+    issuer: https://idp.example.com/realms/main
+    clientID: kubetower
+    clientSecret:
+      existingSecret: kubetower-oidc
+      key: client-secret
+    # The callback as the browser reaches it, registered at the provider byte
+    # for byte. Through a port-forward: http://127.0.0.1:5823/api/auth/oidc/callback
+    redirectURL: https://kubetower.example.com/api/auth/oidc/callback
+    scopes: "openid,email,profile,groups"
+    groupsClaim: groups
+```
+
+**With an issuer set, password sign-in is off** unless `auth.localAccount` is
+true: the console registers no password route and draws no password, so the
+only way in is the provider. The other single sign-on values -
+`usernameClaim`, `usernamePrefix`, `groupsPrefix`, `discoveryURL`,
+`sessionMax` - are described in `values.yaml`, and the name a RoleBinding has
+to use is in [Single sign-on](#single-sign-on-the-name-a-rolebinding-names).
+
+**3. Install:**
 
 ```bash
 helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <chart version> \
-  --namespace kubetower --create-namespace
+  --namespace kubetower -f kubetower-values.yaml
 ```
+
+`NOTES.txt` then prints how to reach it and sign in, with your values filled
+in. Without single sign-on that means reading the drawn password out of the
+log, port-forwarding and signing in.
+
+### From a checkout
+
+Until a chart version is published, or to install a change of your own, the
+same values file works from this repository:
+
+```bash
+helm install kubetower ./charts/kubetower \
+  --namespace kubetower --create-namespace \
+  -f kubetower-values.yaml --set image.tag=<console version>
+```
+
+### Password sign-in behind an ingress: `auth.trustedProxies`
+
+Only when password sign-in is on - no `auth.oidc.issuer`, or
+`auth.localAccount: true` - **and** the console is reached through an ingress.
+Every attempt then arrives from the ingress controller's address, so the
+console cannot tell clients apart: it keeps no per-client attempt budget,
+logs every failure against the controller, and a browser signing in for the
+first time shares one process-wide queue with whoever floods it. The console
+says so in its log at start.
+
+`auth.trustedProxies` names the proxies whose `X-Forwarded-For` the console
+believes, and is rendered as `KT_TRUSTED_PROXIES`. Put the **ingress
+controller's pod address range** there - usually the cluster's pod CIDR, or
+the nodes' range for a controller on `hostNetwork`:
+
+```yaml
+auth:
+  trustedProxies: ["10.244.0.0/16"]
+```
+
+Name only proxies you run: an address listed there can claim to be any
+client. Empty, the variable is not set. An entry that is neither an address
+nor a CIDR range stops the console at start, naming the entry. With single
+sign-on and no `auth.localAccount`, there is no password sign-in and the value
+has no effect. If you set `KT_TRUSTED_PROXIES` through `extraEnv` before this
+value existed, move it here rather than setting both.
+
+### When the audit log stops writing
+
+The console records every act it performs in its audit log, on its standard
+output. If a record cannot be written - a write that fails, comes up short or
+stalls - the console stops acting: that replica refuses every write, exec,
+forward and reveal, and `/readyz` answers not ready with the reason, so the
+readiness probe takes it out of the Service. **It does not recover inside the
+process.** Fix the cause - a full disk, or a stdout or log pipe that nothing
+drains - and restart it:
+
+```bash
+kubectl -n <namespace> rollout restart deployment/<release>
+```
+
+`<release>` stands for the Deployment's name: the release name when it
+contains `kubetower`, as in the commands above, `<release>-kubetower`
+otherwise, or `fullnameOverride`. `NOTES.txt` prints the command with the
+name filled in.
 
 ## Publishing
 
@@ -192,9 +315,21 @@ A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
 - the placeholder `appVersion`;
 - a role read from another console than the one the chart installs: the
   console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
-  derived from, read from the console's repository;
+  derived from, read from the console's repository, and a readable repository
+  with no such tag is refused too;
 - a version the registry already holds. A published version is never
   replaced; bump the chart's version instead.
+
+**One check is a warning, not a refusal: a console repository the release
+cannot read at all.** While `thonicdev/kubetower` is private, this public
+repository's release holds no credential for it, deliberately, so the tag
+cannot be read and the tie between the role and the console cannot be
+checked. The release then says so - a warning annotation, and a line in the
+run's summary naming `derivedFrom.commit` as committed - and publishes. It
+never reports that case as checked. Until the console is public, whoever pushes
+the chart tag makes that check by hand: `derivedFrom.commit` must be the commit
+the console's `v<appVersion>` tag names. Once it is public, the tag is readable
+and the equality is enforced again with no change here.
 
 Then it packages the chart, pushes it to `oci://ghcr.io/thonicdev/charts`, pulls
 it back, checks it is byte for byte what was pushed, and renders it. After the
@@ -202,7 +337,8 @@ registry login is gone, `.github/scripts/read-chart-anonymously.sh` reads it
 once more with no login, so a package nobody else can read fails the release
 instead of the first install. `chart.yml` runs both scripts on every pull
 request against a registry that lives only for the job, and proves each
-refusal, so a release takes no step CI has not taken. The job holding the
+refusal, the unreadable-console warning and a matching tag's tie, so a release
+takes no step CI has not taken. The job holding the
 package token installs nothing and runs only actions pinned to a commit.
 Nobody has pushed a tag yet.
 
