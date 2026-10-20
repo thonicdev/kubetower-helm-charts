@@ -30,6 +30,14 @@ image:
 # the whole environment.
 serverProfile: true
 
+rbac:
+  # Every custom resource the cluster serves, read. The chart leaves this off,
+  # deliberately: it is a cluster-wide wildcard read, and turning it on is a
+  # production decision somebody makes. Here it is on, so the Custom Resources
+  # group lists every kind the development cluster serves rather than hiding
+  # them behind a note - which is what a production install without it does.
+  customResources: true
+
 auth:
   # bcrypt of "password", the fixture's own static users' hash, so there is one
   # development password to remember rather than one drawn into a log.

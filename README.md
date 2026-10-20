@@ -669,8 +669,10 @@ written for it match nobody. The value needs a console image that knows
 
 `dev/values.yaml` is the environment a console under development runs in, on
 Docker Desktop's Kubernetes: the server profile, the fixture below as identity
-provider, the shared account beside it (`admin` / `password`), and a
-`kubetower:dev` image built from a checkout of the console and never pulled.
+provider, the shared account beside it (`admin` / `password`), every custom
+resource readable (`rbac.customResources`, which the chart's default leaves
+off), and a `kubetower:dev` image built from a checkout of the console and
+never pulled.
 Every credential in it is public; it is for a laptop and nothing else.
 
 ```bash
@@ -686,6 +688,7 @@ kubectl -n kubetower port-forward svc/kubetower 8824:5823   # then http://127.0.
 
 `chart.yml` renders the chart with this file and fails if it stops agreeing with
 the fixture: the issuer, the client, its secret and the redirect it registers.
+It also fails if the render stops granting the custom-resource read.
 
 ## The OIDC fixture
 

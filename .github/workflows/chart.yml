@@ -61,8 +61,10 @@ jobs:
       # and agree with the Dex fixture they are written for: its issuer, its
       # client and that client's secret and redirect. Two files describing one
       # environment drift apart quietly, and every way they do looks the same in
-      # a browser - a sign-in that fails. --self-test first: it changes one
-      # thing at a time on the real render and fails unless each is refused.
+      # a browser - a sign-in that fails. And the custom-resource read, which
+      # the defaults leave off and development turns on. --self-test first: it
+      # changes one thing at a time on the real render and fails unless each is
+      # refused.
       - name: The development values render, and agree with the Dex fixture
         run: |
           set -o pipefail
