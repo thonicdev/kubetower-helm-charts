@@ -311,6 +311,35 @@ entries of one name in a container's environment do not apply cleanly. NOTES
 says so when both are set. Moving over from `extraEnv` is one upgrade: set
 `auth.trustedProxies` and remove the `extraEnv` entry in the same values.
 
+### Extra pages: `extras`
+
+The console's extra pages - pages that are not a resource kind - are off
+until the deployment names them, by key:
+
+```yaml
+extras: [first-page, second-page]
+```
+
+or `--set extras='{first-page}'`. Which keys exist depends on the console's
+build; the console names the ones it carries, on its Settings page and in its
+start-up log when it is given a key it does not know. The chart writes the list into a ConfigMap,
+`<release>-extras`, and the Deployment reads it as `KT_EXTRAS`
+(`valueFrom.configMapKeyRef`). The console reads that variable once, at
+start, so the pod template carries a checksum of the ConfigMap and changing
+the list restarts the pod. Empty, the default, neither the ConfigMap nor the
+variable is rendered.
+
+Every key named is on, for every cluster the console shows. Under the server
+profile the list is the only switch: the console's Settings page shows each
+extra page its build carries, on or off, as the deployment set it, with no
+control. A key the console's build does not carry is logged at start and
+ignored. The value is a list of lower-case keys; a string, or a key holding a
+comma or an `=`, is refused before anything renders.
+
+If `extraEnv` sets `KT_EXTRAS` as well, the `extraEnv` entry wins and the chart
+leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;
+NOTES says so when both are set.
+
 ### When the audit log stops writing
 
 The console records every act it performs in its audit log, on its standard
@@ -421,7 +450,8 @@ ServiceAccount. The chart will not grant what the console does not ask for.
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
 password hash if you set one), PersistentVolumeClaim (the state directory),
 Deployment, Service. A ConfigMap holding a kubeconfig only for the desktop
-profile (`serverProfile: false`). Ingress only if you ask, and it is off
+profile (`serverProfile: false`), and one holding `KT_EXTRAS` only when
+`extras` names an extra page. Ingress only if you ask, and it is off
 because an Ingress in front of this publishes cluster credentials behind one
 shared password. NetworkPolicies only if you ask (`networkPolicy.enabled`).
 

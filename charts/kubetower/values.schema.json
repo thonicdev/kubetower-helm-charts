@@ -23,6 +23,11 @@
         }
       }
     },
+    "extras": {
+      "$comment": "The extra pages, by key: rendered as KT_EXTRAS, where a comma or an = would change the meaning of the list. A string - `--set extras=alfa`, without the braces - is refused here, naming the value, rather than failing inside a template with an error that names none.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+    },
     "valkey": {
       "type": "object",
       "properties": {

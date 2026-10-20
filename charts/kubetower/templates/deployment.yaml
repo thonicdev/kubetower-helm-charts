@@ -41,6 +41,12 @@ spec:
         # Several consoles read the Valkey password too.
         checksum/valkey-secret: {{ include "kubetower.valkeySecretChecksum" . }}
         {{- end }}
+        {{- if include "kubetower.extras" . }}
+        # And when the extra pages change: KT_EXTRAS is read once, at start,
+        # from the ConfigMap below, so a new list under an unchanged pod
+        # template would change nothing.
+        checksum/extras: {{ include (print $.Template.BasePath "/configmap-extras.yaml") . | sha256sum }}
+        {{- end }}
         {{- if .Values.auth.existingSecret }}
         checksum/secret: {{ .Values.auth.existingSecret | sha256sum }}
         {{- else }}
@@ -217,6 +223,16 @@ spec:
             {{- if .Values.claude.permissionMode }}
             - name: KT_CLAUDE_PERMISSION_MODE
               value: {{ .Values.claude.permissionMode | quote }}
+            {{- end }}
+            {{- if include "kubetower.extras" . }}
+            # The extra pages this console turns on (`extras`), from the
+            # ConfigMap the chart writes for them. Absent when extras names
+            # none, or when extraEnv sets KT_EXTRAS itself, which then wins.
+            - name: KT_EXTRAS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubetower.fullname" . }}-extras
+                  key: KT_EXTRAS
             {{- end }}
             {{- include "kubetower.valkeyEnv" . | nindent 12 }}
             {{- with include "kubetower.goMemLimit" . }}

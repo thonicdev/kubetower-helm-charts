@@ -1,0 +1,17 @@
+{{- with include "kubetower.extras" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubetower.fullname" $ }}-extras
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" $ | nindent 4 }}
+data:
+  # The extra pages this console turns on, from `extras`: read by the
+  # Deployment as KT_EXTRAS (configMapKeyRef), once, when the process starts.
+  # The pod template carries a checksum of this ConfigMap, so changing the list
+  # restarts the pod rather than leaving the old list running. Every key named
+  # is on, for every cluster; the console logs a key it does not carry and
+  # ignores it.
+  KT_EXTRAS: {{ . | quote }}
+{{- end }}

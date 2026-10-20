@@ -264,3 +264,25 @@ a patch Helm cannot apply cleanly.
 {{- define "kubetower.trustedProxiesInExtraEnv" -}}
 {{- range .Values.extraEnv }}{{ if eq (toString .name) "KT_TRUSTED_PROXIES" }}true{{ end }}{{ end -}}
 {{- end -}}
+
+{{/*
+extras as KT_EXTRAS: the keys joined by commas, each once, in the order
+given - the list the console reads, where a key alone means on. Empty when
+extras names none, and then neither the ConfigMap nor the variable is
+rendered, so an install that names no extra renders what it did before.
+
+Empty as well when extraEnv sets KT_EXTRAS itself: extraEnv wins, as it does
+for GOMEMLIMIT and KT_TRUSTED_PROXIES, since two entries of one name in a
+container's env is a patch Helm cannot apply cleanly. values.schema.json has
+already refused anything but a list of lower-case keys.
+*/}}
+{{- define "kubetower.extras" -}}
+{{- if not (include "kubetower.extrasInExtraEnv" .) -}}
+{{- .Values.extras | default list | uniq | join "," -}}
+{{- end -}}
+{{- end -}}
+
+{{/* "true" when extraEnv names KT_EXTRAS itself, otherwise empty. */}}
+{{- define "kubetower.extrasInExtraEnv" -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "KT_EXTRAS" }}true{{ end }}{{ end -}}
+{{- end -}}
