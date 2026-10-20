@@ -669,11 +669,15 @@ written for it match nobody. The value needs a console image that knows
 
 `dev/values.yaml` is the environment a console under development runs in, on
 Docker Desktop's Kubernetes: the server profile, the fixture below as identity
-provider, the shared account beside it (`admin` / `password`), every custom
-resource readable (`rbac.customResources`, which the chart's default leaves
-off), and a `kubetower:dev` image built from a checkout of the console and
-never pulled.
+provider, the shared account beside it (`dev` / `dev`), every custom resource
+readable (`rbac.customResources`, which the chart's default leaves off), and a
+`kubetower:dev` image built from a checkout of the console and never pulled.
 Every credential in it is public; it is for a laptop and nothing else.
+
+The fixture's static users sign in with `password`, not `dev`.
+`nobody@example.com` is the one no RoleBinding ever names: signed in as it, the
+console shows what a person the cluster's owner has not bound may see, which the
+shared account - acting with the console's own rights - cannot.
 
 ```bash
 # in a checkout of the console
@@ -723,6 +727,7 @@ Two connectors, and the difference between them is the finding:
 |---|---|
 | **Mock** | `email`, and `groups: ["authors"]` |
 | **Email** (`alice@example.com` / `password`) | `email`, **no `groups`** |
+| **Email** (`nobody@example.com` / `password`) | the same, for a person with no RoleBinding anywhere |
 
 Dex's static password database carries no groups. So a group-to-RBAC mapping
 cannot be developed against static users — it needs the mock connector, or a

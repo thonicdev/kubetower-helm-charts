@@ -58,7 +58,8 @@ data:
           - http://127.0.0.1:5823/api/auth/oidc/callback
     enablePasswordDB: true
     # Two people in different groups, which is the whole point: the mapping
-    # KubeTower needs is a RoleBinding to one of these group names.
+    # KubeTower needs is a RoleBinding to one of these group names. Then a
+    # third, who is never bound to anything.
     staticPasswords:
       # bcrypt of "password"
       - email: alice@example.com
@@ -69,6 +70,16 @@ data:
         hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
         username: bob
         userID: "2"
+      # Somebody with no rights: never named by a RoleBinding, here or anywhere,
+      # so the cluster grants it what system:authenticated holds and nothing
+      # more. It shows what a person the cluster's owner has not bound sees -
+      # which extras are offered to whom - which the console's shared account,
+      # acting with the console's own rights, cannot. Its own bcrypt of
+      # "password", like the two above. Bind it, and it tests nothing.
+      - email: nobody@example.com
+        hash: "$2a$10$PSCKL2nR4Zj1rqAnF.KBZ.u4MDFJAjVphIpYmkN.2zq1G5b94JGGa"
+        username: nobody
+        userID: "3"
 ---
 apiVersion: apps/v1
 kind: Deployment
