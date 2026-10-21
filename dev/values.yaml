@@ -10,8 +10,19 @@
 #   kubectl -n kubetower port-forward svc/kubetower 8824:5823
 #   # then http://127.0.0.1:8824
 #
-# Sign in either way: through Dex (pick Mock for a groups claim, or Email with
-# alice@example.com / password), or with the shared account, admin / password.
+# Sign in either way: with the shared account, dev / dev, or through Dex - Mock
+# for a groups claim, or Email as one of the fixture's static users, whose
+# password is `password`, not `dev`:
+#
+#   alice@example.com, bob@example.com   for the RoleBindings you write them
+#   nobody@example.com                   never bound: no rights beyond
+#                                        system:authenticated
+#
+# The shared account acts with the console's own rights, so it cannot show who
+# may see what. nobody@example.com is the account that can: who may see an
+# extra is checked by signing in as it. In the cluster it is the bare address
+# - the email claim, no prefix - so
+# `kubectl auth can-i --list --as nobody@example.com` says what it holds.
 #
 # **Never anywhere else.** Every credential here is public - in this file and
 # in the fixture - so a console installed with them lets in anybody who can
@@ -30,10 +41,20 @@ image:
 # the whole environment.
 serverProfile: true
 
+rbac:
+  # Every custom resource the cluster serves, read. The chart leaves this off,
+  # deliberately: it is a cluster-wide wildcard read, and turning it on is a
+  # production decision somebody makes. Here it is on, so the Custom Resources
+  # group lists every kind the development cluster serves rather than hiding
+  # them behind a note - which is what a production install without it does.
+  customResources: true
+
 auth:
-  # bcrypt of "password", the fixture's own static users' hash, so there is one
-  # development password to remember rather than one drawn into a log.
-  passwordHash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+  # The shared account is dev / dev: the user named here rather than the
+  # chart's `admin`, and a bcrypt of "dev" rather than a password drawn into a
+  # log. It is not the fixture's password - its users keep `password`.
+  user: dev
+  passwordHash: "$2a$10$I.SqHi9yMy5/JYUYMTKQ5u7J75li0MbYJl5LsB8F9I5Akaxe04dNm"
   # Fixed, so a rebuilt image or a restarted pod does not sign you out.
   sessionSecret: "kubetower-development-only-session-key"
   # The shared password beside single sign-on, which the chart refuses by

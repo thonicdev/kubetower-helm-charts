@@ -16,6 +16,9 @@ would be given is compared with what the fixture serves:
 - the shared password is kept beside single sign-on, with a hash, so there is
   a way in when Dex is not running;
 - the server profile, and a local image that is never pulled;
+- every custom resource readable (rbac.customResources), which the chart's
+  default leaves off, so the Custom Resources group lists every kind the
+  development cluster serves rather than a note saying some are hidden;
 - the port-forward NOTES prints is the port the redirect sends the browser
   back to, or a sign-in ends on a closed port.
 """
@@ -48,7 +51,8 @@ def rendered():
         if d["kind"] == "Secret":
             secret.update({k: base64.b64decode(v).decode() for k, v in (d.get("data") or {}).items()})
             secret.update(d.get("stringData") or {})
-    return container, env, secret
+    rules = [r for d in docs if d["kind"] == "ClusterRole" for r in d.get("rules") or []]
+    return container, env, secret, rules
 
 
 def notes_port():
@@ -71,7 +75,7 @@ def dex():
     return yaml.safe_load(config)
 
 
-def complaints(container, env, secret, config, port):
+def complaints(container, env, secret, config, port, rules):
     found = []
     redirect = urllib.parse.urlparse(env.get("KT_OIDC_REDIRECT_URL") or "")
     if str(redirect.port) != port:
@@ -98,10 +102,14 @@ def complaints(container, env, secret, config, port):
     if container.get("imagePullPolicy") != "Never" or not container.get("image", "").endswith(":dev"):
         found.append(f"the image is {container.get('image')!r}, pulled {container.get('imagePullPolicy')}, "
                      "and the development image is a local :dev that is never pulled")
+    if not any("*" in (r.get("apiGroups") or []) and "*" in (r.get("resources") or [])
+               and {"get", "list"} <= set(r.get("verbs") or []) for r in rules):
+        found.append("no ClusterRole rule reads every custom resource (rbac.customResources), "
+                     "so the Custom Resources group hides the kinds it may not list")
     return found
 
 
-def self_test(container, env, secret, config, port):
+def self_test(container, env, secret, config, port, rules):
     """Prove each comparison can say no, on the real render with one thing changed."""
     probes = [
         ("issuer", lambda e, s, c, k: c.update(issuer=c["issuer"] + "/")),
@@ -114,24 +122,27 @@ def self_test(container, env, secret, config, port):
         ("profile", lambda e, s, c, k: k.update(args=[a for a in k.get("args", []) if a != "--incluster"])),
         ("image", lambda e, s, c, k: k.update(imagePullPolicy="IfNotPresent")),
         ("notes port", lambda e, s, c, k: None),
+        ("custom resources", lambda e, s, c, k: None),
     ]
     for label, change in probes:
         e, s, c, k = dict(env), dict(secret), yaml.safe_load(yaml.safe_dump(config)), dict(container)
         p = port if label != "notes port" else "5823"
+        r = rules if label != "custom resources" else [
+            x for x in rules if "*" not in (x.get("resources") or [])]
         change(e, s, c, k)
-        if not complaints(k, e, s, c, p):
+        if not complaints(k, e, s, c, p, r):
             raise SystemExit(f"the check accepted development values with the {label} changed")
     print(f"ok    self-test - {len(probes)} single changes refused")
     print()
 
 
 if __name__ == "__main__":
-    container, env, secret = rendered()
+    container, env, secret, rules = rendered()
     config = dex()
     port = notes_port()
     if "--self-test" in sys.argv:
-        self_test(container, env, secret, config, port)
-    found = complaints(container, env, secret, config, port)
+        self_test(container, env, secret, config, port, rules)
+    found = complaints(container, env, secret, config, port, rules)
     print(f"{'FAIL' if found else 'ok  '}  {VALUES} agrees with {FIXTURE}")
     for line in found:
         print(f"        {line}")

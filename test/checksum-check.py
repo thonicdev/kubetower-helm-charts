@@ -1,22 +1,23 @@
-"""A changed credential restarts the pods that read it.
+"""A changed credential, or a changed list of extra pages, restarts the pods
+that read it.
 
     python test/checksum-check.py
 
-The console reads its password hash and its session key once, at start. A
-Secret that changes under a Deployment that does not leaves the old values
-running, so the pod template carries a checksum of the Secret, and a changed
-Secret is a changed pod template, which Kubernetes rolls.
+The console reads its password hash, its session key and KT_EXTRAS once, at
+start. A Secret or a ConfigMap that changes under a Deployment that does not
+leaves the old values running, so the pod template carries a checksum of each,
+and a changed object is a changed pod template, which Kubernetes rolls.
 
 Two things are checked, because each can be wrong while the other holds:
 
-1. **The checksum describes the Secret that was rendered beside it.** The
+1. **The checksum describes the object that was rendered beside it.** The
    session key is drawn at random when nothing supplies one; a checksum over
    a second, independent draw would change on every render and describe
-   nothing. Rendered once, the annotation must equal the hash of the Secret in
-   the same output.
-2. **Changing a credential changes the Deployment.** Two renders that differ
-   only in the session key, or only in the password hash, must not produce
-   byte-identical Deployments.
+   nothing. Rendered once, each annotation must equal the hash of the object
+   in the same output.
+2. **Changing a credential, or the extra pages, changes the Deployment.** Two
+   renders that differ only in the session key, only in the password hash or
+   only in `extras` must not produce byte-identical Deployments.
 """
 
 import hashlib
@@ -32,6 +33,7 @@ CHART = "./charts/kubetower"
 HASHED = {
     ("templates/deployment.yaml", "checksum/secret"): "templates/secret.yaml",
     ("templates/deployment.yaml", "checksum/valkey-secret"): "templates/valkey-secret.yaml",
+    ("templates/deployment.yaml", "checksum/extras"): "templates/configmap-extras.yaml",
     ("templates/valkey.yaml", "checksum/secret"): "templates/valkey-secret.yaml",
     ("templates/valkey.yaml", "checksum/config"): "templates/valkey-config.yaml",
 }
@@ -106,12 +108,21 @@ if __name__ == "__main__":
     failures += checksums_describe_what_was_rendered([], expected=1)
     failures += checksums_describe_what_was_rendered(fixed, expected=1)
     failures += checksums_describe_what_was_rendered(SEVERAL, expected=4)
+    failures += checksums_describe_what_was_rendered(fixed + ["extras={alfa}"], expected=2)
     failures += a_change_rolls_the_pods(
         "a new session key",
         ["auth.sessionSecret=" + "1" * 32], ["auth.sessionSecret=" + "2" * 32])
     failures += a_change_rolls_the_pods(
         "a new password hash",
         fixed + ["auth.passwordHash=$2y$12$first"], fixed + ["auth.passwordHash=$2y$12$second"])
+    # The extra pages: KT_EXTRAS is read once, at start, from their ConfigMap.
+    # Adding one, and taking the list away, both restart the console.
+    failures += a_change_rolls_the_pods(
+        "another extra page",
+        fixed + ["extras={alfa}"], fixed + ["extras={alfa,bravo}"])
+    failures += a_change_rolls_the_pods(
+        "no extra page any more",
+        fixed + ["extras={alfa}"], fixed)
     # Valkey: any line of its configuration, and the Secret it reads its
     # password from, restart it - and the second restarts the consoles too.
     failures += a_change_rolls_the_pods(

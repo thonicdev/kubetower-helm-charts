@@ -456,9 +456,28 @@ claude:
   readOnly: true
   permissionMode: ""
 
+# The extra pages this console turns on, by key - for example
+# `extras: [first-page, second-page]`, or `--set extras='{first-page}'`. A list
+# of lower-case keys and nothing else; values.schema.json refuses the rest.
+# Which keys exist depends on the console's build: the console names the ones
+# it carries, on its Settings page and in its start-up log when given a key it
+# does not know.
+#
+# Rendered into a ConfigMap, <release>-extras, which the Deployment reads as
+# KT_EXTRAS. The pod template carries a checksum of it, so changing the list
+# restarts the pod: the console reads KT_EXTRAS once, at start. Empty, neither
+# the ConfigMap nor the variable is rendered.
+#
+# Every key named is on, for every cluster the console shows. Under the server
+# profile this list is the only switch there is - the console's Settings page
+# shows what it turned on and offers no control. A key the console's build
+# does not carry is logged at start and ignored; it does not stop the console.
+#
+# extraEnv setting KT_EXTRAS as well wins, and the chart then leaves this out
+# (NOTES says so), as it does for GOMEMLIMIT and auth.trustedProxies.
+extras: []
+
 extraEnv: []
-# - name: KT_EXTRAS
-#   value: ""
 
 # ---------------------------------------------------------------------------
 # Storage - the state directory, KT_STATE_DIR=/var/lib/kubetower

@@ -29,6 +29,12 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 {{- end }}
 {{- end }}
 
+{{- if and (include "kubetower.extrasInExtraEnv" .) .Values.extras }}
+
+extras is IGNORED: extraEnv sets KT_EXTRAS as well, and the extraEnv entry
+wins. Remove one of them.
+{{- end }}
+
 1. REACH IT
 {{- /* The local port is the one single sign-on sends the browser back to, when
      the redirect is a loopback address: forwarding any other port lands the
