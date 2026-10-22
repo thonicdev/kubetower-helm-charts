@@ -75,6 +75,13 @@ auth:
 # secret from a Secret it names (auth.oidc.clientSecret.existingSecret), so
 # that `helm get values` never prints it; here there is nothing to hide, and
 # setting it directly keeps this environment to one file and the fixture.
+# The console's extra pages, both on here so development sees them: Argo CD's
+# Delivery Center and KubeCron. The chart's default is none - a production
+# install names what it wants. Both read a stored token and send it to a Service
+# they find from what the cluster holds, which is harmless in a cluster of one
+# developer and is why the default stays empty.
+extras: [argocd, kubecron]
+
 extraEnv:
   - name: KT_OIDC_CLIENT_SECRET
     value: kubetower-dev-secret
