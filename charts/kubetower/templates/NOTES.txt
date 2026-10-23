@@ -35,6 +35,12 @@ extras is IGNORED: extraEnv sets KT_EXTRAS as well, and the extraEnv entry
 wins. Remove one of them.
 {{- end }}
 
+{{- if and (include "kubetower.extraSettingsInExtraEnv" .) .Values.extraSettings }}
+
+extraSettings is IGNORED: extraEnv sets KT_EXTRA_SETTINGS as well, and the
+extraEnv entry wins. Remove one of them.
+{{- end }}
+
 1. REACH IT
 {{- /* The local port is the one single sign-on sends the browser back to, when
      the redirect is a loopback address: forwarding any other port lands the

@@ -477,6 +477,28 @@ claude:
 # (NOTES says so), as it does for GOMEMLIMIT and auth.trustedProxies.
 extras: []
 
+# The extra pages' own settings, by page and setting key, each true or false -
+# for example, to draw the Argo CD column in the console's resource lists,
+# which is off by default:
+#
+#   extraSettings:
+#     argocd:
+#       list-column: true
+#
+# or `--set extraSettings.argocd.list-column=true`. Which settings exist
+# depends on the console's build: its Settings page lists each page's settings,
+# and its start-up log names a setting it does not know.
+#
+# Rendered as KT_EXTRA_SETTINGS (`argocd.list-column=on`) into the same
+# ConfigMap as extras, and restarted on change the same way. Each setting named
+# has that value for every cluster the console shows, and the Settings page
+# draws it as set by the deployment. Under the server profile this is the only
+# way to change one: the console offers no control for it there. Empty, the
+# default, the variable is not rendered and every setting keeps its default.
+#
+# extraEnv setting KT_EXTRA_SETTINGS as well wins (NOTES says so).
+extraSettings: {}
+
 extraEnv: []
 
 # ---------------------------------------------------------------------------

@@ -340,6 +340,33 @@ If `extraEnv` sets `KT_EXTRAS` as well, the `extraEnv` entry wins and the chart
 leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;
 NOTES says so when both are set.
 
+### Settings of the extra pages: `extraSettings`
+
+An extra page may offer settings of its own, each on or off - the Argo CD page's
+column in the console's resource lists, for one, which is off by default. Under
+the server profile the console offers no control for them, so the deployment
+sets them, by page and setting key:
+
+```yaml
+extraSettings:
+  argocd:
+    list-column: true
+```
+
+or `--set extraSettings.argocd.list-column=true`. Which settings exist depends
+on the console's build: its Settings page lists each page's settings, and its
+start-up log names a setting it does not know and ignores it. The chart writes
+them into the same ConfigMap as `extras`, as `KT_EXTRA_SETTINGS`
+(`argocd.list-column=on`), and the Deployment reads that key by reference;
+changing a setting restarts the pod, as changing the list does. Empty, the
+default, the variable is not rendered and every setting keeps its default.
+
+Each setting named has that value for every cluster the console shows, and the
+Settings page draws it as set by the deployment. The value is a map of page to
+setting to `true` or `false`; a string, a number or an upper-case key is
+refused before anything renders. If `extraEnv` sets `KT_EXTRA_SETTINGS` as
+well, the `extraEnv` entry wins and NOTES says so.
+
 ### When the audit log stops writing
 
 The console records every act it performs in its audit log, on its standard
@@ -450,8 +477,9 @@ ServiceAccount. The chart will not grant what the console does not ask for.
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
 password hash if you set one), PersistentVolumeClaim (the state directory),
 Deployment, Service. A ConfigMap holding a kubeconfig only for the desktop
-profile (`serverProfile: false`), and one holding `KT_EXTRAS` only when
-`extras` names an extra page. Ingress only if you ask, and it is off
+profile (`serverProfile: false`), and one holding `KT_EXTRAS` and
+`KT_EXTRA_SETTINGS` only when `extras` names an extra page or `extraSettings` a
+setting. Ingress only if you ask, and it is off
 because an Ingress in front of this publishes cluster credentials behind one
 shared password. NetworkPolicies only if you ask (`networkPolicy.enabled`).
 

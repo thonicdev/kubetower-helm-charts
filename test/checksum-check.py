@@ -123,6 +123,11 @@ if __name__ == "__main__":
     failures += a_change_rolls_the_pods(
         "no extra page any more",
         fixed + ["extras={alfa}"], fixed)
+    # Their settings, read once at start from the same ConfigMap.
+    failures += checksums_describe_what_was_rendered(fixed + ["extraSettings.alfa.one=true"], expected=2)
+    failures += a_change_rolls_the_pods(
+        "an extra page's setting turned on",
+        fixed + ["extraSettings.alfa.one=false"], fixed + ["extraSettings.alfa.one=true"])
     # Valkey: any line of its configuration, and the Secret it reads its
     # password from, restart it - and the second restarts the consoles too.
     failures += a_change_rolls_the_pods(
