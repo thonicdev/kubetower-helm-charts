@@ -93,13 +93,18 @@ def settings_failures():
         failures.append(f"extraEnv as well: {env}, ConfigMaps {sorted(maps)}, checksum {checksum}; "
                         "want the extraEnv entry alone")
 
-    for value in ["extraSettings=alfa", "extraSettings.alfa=on", "extraSettings.alfa.one=yes",
-                  "extraSettings.Alfa.one=true", "extraSettings.alfa.One=true"]:
+    # What the refusal must name: the value, or - for a key the schema's
+    # propertyNames refuses, which helm reports by the key alone - that key.
+    for value, named in [("extraSettings=alfa", "extraSettings"),
+                         ("extraSettings.alfa=on", "extraSettings"),
+                         ("extraSettings.alfa.one=yes", "extraSettings"),
+                         ("extraSettings.Alfa.one=true", "Alfa"),
+                         ("extraSettings.alfa.One=true", "One")]:
         out = render("--set", value)
         if out.returncode == 0:
             failures.append(f"NOT REFUSED: --set {value}")
-        elif "extraSettings" not in out.stderr:
-            failures.append(f"--set {value} refused without naming extraSettings: {out.stderr.strip()}")
+        elif named not in out.stderr:
+            failures.append(f"--set {value} refused without naming {named}: {out.stderr.strip()}")
     return failures
 
 
