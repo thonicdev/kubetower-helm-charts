@@ -286,3 +286,29 @@ already refused anything but a list of lower-case keys.
 {{- define "kubetower.extrasInExtraEnv" -}}
 {{- range .Values.extraEnv }}{{ if eq (toString .name) "KT_EXTRAS" }}true{{ end }}{{ end -}}
 {{- end -}}
+
+{{/*
+extraSettings as KT_EXTRA_SETTINGS: `<extra>.<setting>=on|off`, joined by
+commas, in key order (a map has no other) - the console's grammar. Empty when
+extraSettings names none, and then the variable is not rendered, so an
+install that names no setting renders what it did before. Empty as well when
+extraEnv sets KT_EXTRA_SETTINGS itself, which then wins, as for KT_EXTRAS.
+values.schema.json has already refused anything but extra -> setting ->
+boolean, with lower-case keys.
+*/}}
+{{- define "kubetower.extraSettings" -}}
+{{- if not (include "kubetower.extraSettingsInExtraEnv" .) -}}
+{{- $out := list -}}
+{{- range $extra, $settings := .Values.extraSettings | default dict -}}
+{{- range $name, $on := $settings -}}
+{{- $out = append $out (printf "%s.%s=%s" $extra $name (ternary "on" "off" $on)) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $out -}}
+{{- end -}}
+{{- end -}}
+
+{{/* "true" when extraEnv names KT_EXTRA_SETTINGS itself, otherwise empty. */}}
+{{- define "kubetower.extraSettingsInExtraEnv" -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "KT_EXTRA_SETTINGS" }}true{{ end }}{{ end -}}
+{{- end -}}

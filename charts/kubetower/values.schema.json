@@ -28,6 +28,16 @@
       "type": "array",
       "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
     },
+    "extraSettings": {
+      "$comment": "The extra pages' settings, page -> setting -> boolean: rendered as KT_EXTRA_SETTINGS, `<page>.<setting>=on|off`, where a dot, a comma or an = in a key would change the meaning. A string or a number in place of the boolean - `--set extraSettings.argocd.list-column=yes` - is refused here, naming the value.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "additionalProperties": { "type": "boolean" }
+      }
+    },
     "valkey": {
       "type": "object",
       "properties": {
