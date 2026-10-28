@@ -539,7 +539,15 @@ def scan_extra_files(extra, files):
                 for t in HOST_METHODS[m.group(1)]:
                     extra.found[t].add(at(m.start()))
 
-        named = {name for name in re.findall(r'\b(\w+Kind)\b', text) if name in crds}
+        # The kinds crd.GVR() can be: those named in code - not in a string -
+        # in the function the ListQuery is in. A file names kinds in messages
+        # and in other handlers, and those are not this list.
+        code = re.sub(r'"(?:[^"\\\n]|\\.)*"|`[^`]*`', lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text)
+        funcs = [f.start() for f in re.finditer(r'(?m)^func\b', code)] + [len(code)]
+        def named_in(pos):
+            start = max([f for f in funcs if f <= pos], default=0)
+            end = min(f for f in funcs if f > pos)
+            return {n for n in re.findall(r'\b(\w+Kind)\b', code[start:end]) if n in crds}
         for m in LIST_QUERY.finditer(text):
             body = braced(text, m.end() - 1)
             g = QUERY_GVR.search(body)
@@ -550,8 +558,8 @@ def scan_extra_files(extra, files):
             if expr in gvr_vars:
                 group, resource = gvr_vars[expr]
                 extra.found[(group, resource, "list")].add(at(m.start()))
-            elif expr == "crd.GVR()" and named:
-                for name in named:
+            elif expr == "crd.GVR()" and named_in(m.start()):
+                for name in named_in(m.start()):
                     group, resource = crds[name]
                     extra.found[(group, resource, "list")].add(at(m.start()))
             elif (rel, expr) in EXTRA_GVRS:
@@ -707,6 +715,10 @@ EXTRA_PROBES = [
     ("a ListQuery on an expression the scan cannot place",
      'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: somewhere.gvr}) }\n'),
     ("crd.GVR() in a file naming no custom resource",
+     'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: crd.GVR()}) }\n'),
+    ("crd.GVR() in a function naming no kind, beside one that does",
+     'const KustomizationKind = "kustomizations.kustomize.toolkit.fluxcd.io"\n'
+     'func g() string { return "Flux, serving " + KustomizationKind }\n'
      'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: crd.GVR()}) }\n'),
     ("a Host method the scan does not know",
      'func f(h extension.Host) { h.Exec(r, c, "ns", "pod") }\n'),
