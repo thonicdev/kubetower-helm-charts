@@ -31,8 +31,10 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 
 {{- if and (include "kubetower.extrasInExtraEnv" .) .Values.extras }}
 
-extras is IGNORED: extraEnv sets KT_EXTRAS as well, and the extraEnv entry
-wins. Remove one of them.
+extras is IGNORED for the pages: extraEnv sets KT_EXTRAS as well, and the
+extraEnv entry wins. The role still grants what the extras named in `extras`
+read, and nothing for a page only KT_EXTRAS turns on. Keep one of them: the
+`extras` value.
 {{- end }}
 
 1. REACH IT

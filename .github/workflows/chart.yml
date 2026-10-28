@@ -527,12 +527,16 @@ jobs:
       # for the list as committed and a change in the console does not turn an
       # unrelated pull request red; moving the commit is a change to the list.
       #
-      # The console's repository must be readable from here for this to run.
-      # Where it is not, the step says NOT RUN - in the log, as a warning and in
-      # the run's summary - rather than failing for something no change here
-      # could fix, or passing as if it had compared anything. Locally, with a
-      # checkout of the console beside this one:
-      #   python test/derive-needs.py --core ../kubetower
+      # The console's repository must be readable from here for this to run,
+      # and **where it is not, the step fails**. It used to warn NOT RUN and
+      # pass, and a check that passes without having compared anything is
+      # read as green by everybody who does not open the log: the list went
+      # unchecked for every change to the console's extras that way. Until
+      # this workflow can read the console (the repository public, or a
+      # read-only credential given to this job), this step is red and says
+      # why; run it locally instead, with a checkout of the console beside
+      # this one at the commit the list names:
+      #   python test/derive-needs.py --self-test --core ../kubetower
       - name: the list is what the console's source asks for
         env:
           GIT_TERMINAL_PROMPT: "0"
@@ -546,9 +550,9 @@ jobs:
           # Bounded: an unreadable repository must answer, not hang the job.
           if ! timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1; then
             sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
-            echo "::warning::NOT RUN: $url is not readable from this workflow, so console-needs.yaml was not compared with the console's source at $commit"
-            echo "**Derivation NOT RUN**: $url is not readable from this workflow; console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error::$url is not readable from this workflow, so console-needs.yaml was not compared with the console's source at $commit. This is a failure, not a skip: run test/derive-needs.py --self-test --core <checkout at $commit> locally, and say what it printed on the pull request"
+            echo "**Derivation FAILED - not run**: $url is not readable from this workflow; console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           git init -q "$RUNNER_TEMP/core"
           timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"

@@ -475,6 +475,14 @@ claude:
 #
 # extraEnv setting KT_EXTRAS as well wins, and the chart then leaves this out
 # (NOTES says so), as it does for GOMEMLIMIT and auth.trustedProxies.
+#
+# **This list also decides what the ClusterRole grants the extras**: each
+# extra's own reads (Argo CD's and Flux's custom resources for `argocd`, the
+# VerticalPodAutoscalers for `kubeadjust`) are granted while it is named here,
+# and only then - a page turned on through extraEnv alone gets none. Nothing
+# stronger comes with a name: Secrets, port-forwards and proxies stay behind
+# their rbac switches above. console-needs.yaml and the README say which extra
+# uses which.
 extras: []
 
 extraEnv: []

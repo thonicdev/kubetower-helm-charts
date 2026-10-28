@@ -40,12 +40,37 @@ only as well as this scan reads it.
   authorised as `get` on the subresource as well as `create`;
 - the verbs every write is made with, from internal/edit and internal/actions.
 
-**What it compares.** Every request found must be in the list. Every line in
+**The extras**, each package under `extras/` that cmd/kubetower/main.go
+compiles in, are read apart from the rest and attributed to their key - the
+key `extras:` in values.yaml names. An extra reaches the cluster only through
+`extension.Host`, so what is read there is:
+
+- every `extension.ListQuery{GVR: ...}`, a list of the resource its GVR names:
+  a variable spelt out in the extra's package, `crd.GVR()` for the custom
+  resources whose `plural.group` constants the same file names, or an
+  expression placed in EXTRA_GVRS below;
+- every typed client call, as for the console's own code;
+- every other Host method, as HOST_METHODS says it expands.
+
+A Host method this scan does not know, a `ListQuery` GVR it cannot place and
+`crd.GVR()` in a file naming no custom resource each fail the run.
+
+**What it compares.** Every request the console's own code makes must be in
+the list, under a switch other than an extra's. Every line in
 the list must be a request found - except writes, which are the chart's choice
 of kinds: the editor and Delete reach any kind the console lists, so a write in
 the list must be a kind the console lists with a verb it writes with, and that
 is all. The SelfSubjectAccessReview needs no grant (Kubernetes' own
 system:basic-user role holds it) and is not compared.
+
+Every request an extra makes must be in the list on a line whose switch is
+that extra (`extras.<key>`), or on a line that names the extra under
+`extras:` - a request the console makes as well, granted by the console's own
+switch. Every `extras.<key>` line, and every extra named under `extras:`, must
+be a request that extra makes, and every key must be an extra the binary
+compiles in. An extra that reads "any kind" (Argo CD's tab on every page) is
+read as the console's own list pages, already compared, and the
+custom-resource wildcard, which must name it.
 
 Exit status: 0 the list and the source agree, 1 they differ, 2 the source could
 not be read. The last is not a pass.
@@ -95,10 +120,9 @@ WRITE_VERBS = {"create", "patch", "delete", "update", "deletecollection"}
 #                      are read as list questions;
 #                    - an audit record rebuilt from what was reviewed, which asks
 #                      the cluster nothing;
-#                    - the extension host, which reviews the requests an
-#                      extension compiled into the binary makes. The console's
-#                      own image compiles none in; a binary that does needs the
-#                      grants its extensions ask for, and they are not here.
+#                    - the extension host, which reviews the requests the
+#                      extras make; those are read from extras/ itself, and
+#                      attributed to the extra that makes them.
 DYNAMIC = {
     ("internal/resources/fetch.go", "list"): "none",
     ("internal/access/record.go", "r.Verb"): "none",
@@ -108,6 +132,9 @@ DYNAMIC = {
     ("internal/changes/changes.go", "get"): "listed-get",
     ("internal/changes/changes.go", "list"): "file-gvrs",
     ("internal/detail/usedby.go", "list"): "file-gvrs",
+    # The review of each list the drawer's owned-object events make; the
+    # lists themselves are typed calls in the same file, read on their own.
+    ("internal/detail/owned.go", "list"): "none",
     ("internal/edit/door.go", "verb"): "writes",
     ("internal/customresources/customresources.go", "list"): "custom-resources",
     ("internal/customresources/customresources.go", "get"): "custom-resources",
@@ -152,7 +179,7 @@ TYPED = re.compile(r'\.(' + CLIENT_RE + r')\(\)\s*\.\s*(\w+)' + ARGS + r'\s*\.\s
 TYPED_HELD = re.compile(r'\b(\w+)\s*:?=\s*[\w.]*\.(' + CLIENT_RE + r')\(\)\s*\.\s*(\w+)' + ARGS + r'[ \t]*(?:;|\n|$)')
 REST_CLIENT = re.compile(r'RESTClient\(\)')
 REST_CHAIN = re.compile(r'RESTClient\(\)\s*\.\s*(Get|Post|Put|Patch|Delete)\(\)((?:\s*\.\s*\w+' + ARGS + r')*)')
-REST_HELD = re.compile(r'\b(\w+)\s*:?=\s*[\w.()]*RESTClient\(\)[ \t]*(?:;|\n|$)')
+REST_HELD = re.compile(r'\b(\w+)(?:\s*,\s*\w+)?\s*:?=\s*[\w.()]*RESTClient\(\)(?:\.\(\*rest\.RESTClient\))?[ \t]*(?:;|\n|$)')
 ABS_PATH = re.compile(r'\bAbsPath\(')
 GVR_VAR = re.compile(r'\b(\w+)\s*(?::=|=)\s*schema\.GroupVersionResource\{([^{}]*)\}')
 GVR_ANY = re.compile(r'GroupVersionResource\{([^{}]*)\}')
@@ -169,16 +196,18 @@ WRITE_CALL = re.compile(r'\b(?:perform\(ctx,\s*where,\s*target,|on\(|edit\.Attri
 KIND_ROW = re.compile(r'^\s*Kind:\s*"(\w+)"', re.M)
 
 
-def go_files(core):
+def go_files(core, under=None):
     """Every non-test Go file of the console's own module: not another module
-    nested in it, not a test helper package, not the web front end."""
+    nested in it, not a test helper package, not the web front end, and not
+    the extras, which are read apart (scan_extras). With under, only the files
+    below that directory of the module, the extras included."""
     root = os.path.abspath(core)
     nested = {os.path.abspath(dp) for dp, _, fs in os.walk(core) if "go.mod" in fs} - {root}
-    for dirpath, dirnames, filenames in os.walk(core):
+    for dirpath, dirnames, filenames in os.walk(os.path.join(core, under) if under else core):
         here = os.path.abspath(dirpath)
         dirnames[:] = [d for d in dirnames
                        if d not in {"testdata", "vendor", "node_modules", ".git"}
-                       and not (here == root and d == "web")
+                       and not (here == root and d in {"web", "extras"} and under is None)
                        and os.path.join(here, d) not in nested
                        and not d.endswith("test")]
         for f in filenames:
@@ -417,6 +446,204 @@ def scan_core(core):
     return scan
 
 
+# What each extension.Host method asks the cluster for, when an extra calls it.
+# The Host is the console's own code (internal/web/host*.go), so every request
+# here is also one the console's scan must find - checked, so that this table
+# cannot drift from the source it summarises.
+FORWARD = [("", "services", "get"), ("", "pods", "list"),
+           ("", "pods/portforward", "create"), ("", "pods/portforward", "get")]
+HOST_METHODS = {
+    # Nothing by themselves: List is read from its ListQuery, Client from the
+    # typed calls made on what it returns.
+    "Client": [], "List": [], "ConfirmToken": [],
+    # The custom-resource catalogue.
+    "Definitions": [("apiextensions.k8s.io", "customresourcedefinitions", "list")],
+    # One key of one named Secret, reviewed for the person first.
+    "Reveal": [("", "secrets", "get")],
+    # The Service, its pods, and the tunnel to one of them.
+    "Forward": FORWARD,
+    # metrics-server's figures.
+    "ContainerUsage": [("metrics.k8s.io", "pods", "list")],
+    # Prometheus: found among the Services, asked through the service proxy,
+    # or through a port-forward when the proxy is refused.
+    "UsageWindow": [("", "services", "list"), ("", "services/proxy", "get")] + FORWARD,
+    # The kubelets' stats, through the node proxy.
+    "Usage": [("", "nodes/proxy", "get")],
+}
+
+# A ListQuery whose GVR is an expression this scan cannot resolve from the
+# extra's own variables: the file and the expression, and what it reads.
+#
+#   any-kind   every kind the console shows: its own list pages, already
+#              compared, and every custom resource - the wildcard
+#   a list     the extra's own GVR variables the expression takes its value from
+EXTRA_GVRS = {
+    ("extras/argocd/owner.go", "t.gvr"): "any-kind",
+    ("extras/argocd/tracked.go", "target.gvr"): "any-kind",
+    ("extras/kubeadjust/kubeadjust.go", "kind.gvr"): ["replicaSetsGVR", "jobsGVR"],
+    ("extras/kubecron/owner.go", "gvr"): ["jobsGVR", "podsGVR"],
+}
+
+EXTRA_IMPORT = re.compile(r'"github\.com/thonicdev/kubetower/extras/([\w-]+)"')
+EXTRA_KEY = re.compile(r'\bconst\s+Key\s*=\s*"([a-z0-9-]+)"')
+LIST_QUERY = re.compile(r'\bListQuery\{')
+QUERY_GVR = re.compile(r'\bGVR\s*:\s*([^,}\n]+)')
+CRD_CONST = re.compile(r'\b(\w+Kind)\s*=\s*"([a-z0-9-]+)\.([a-z0-9-]+(?:\.[a-z0-9-]+)+)"')
+HOST_PARAM = re.compile(r'\b(\w+)\s+extension\.Host\b')
+
+
+def braced(text, start):
+    """The text from the brace at start to its match."""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
+
+
+class Extra:
+    def __init__(self, key, directory):
+        self.key, self.directory = key, directory
+        self.scan = Scan()                 # the typed calls, as for the console
+        self.found = defaultdict(set)      # (group, resource, verb) -> {file:line}
+        self.unplaced = []
+
+
+def scan_extra_files(extra, files):
+    """files: (rel, text). Reads every Host call and every ListQuery."""
+    gvr_vars, crds = {}, {}
+    for rel, text in files:
+        consts = dict(CONST.findall(text))
+        for m in GVR_VAR.finditer(text):
+            fields = gvr_fields(m.group(2), consts)
+            if fields:
+                gvr_vars[m.group(1)] = fields
+        for m in CRD_CONST.finditer(text):
+            crds[m.group(1)] = (m.group(3), m.group(2))
+    for rel, text in files:
+        text = re.sub(r'(?m)^[ \t]*//.*$', '', text)
+        scan_file(extra.scan, rel, text)
+        at = lambda pos: f"{rel}:{line_of(text, pos)}"
+
+        hosts = set(HOST_PARAM.findall(text)) - {"extension"}
+        if hosts:
+            call = re.compile(r'\b(?:' + "|".join(sorted(hosts)) + r')\.(\w+)\(')
+            for m in call.finditer(text):
+                if m.group(1) not in HOST_METHODS:
+                    extra.unplaced.append((at(m.start()), "a Host method this scan does not know: " + m.group(0)))
+                    continue
+                for t in HOST_METHODS[m.group(1)]:
+                    extra.found[t].add(at(m.start()))
+
+        # The kinds crd.GVR() can be: those named in code - not in a string -
+        # in the function the ListQuery is in. A file names kinds in messages
+        # and in other handlers, and those are not this list.
+        code = re.sub(r'"(?:[^"\\\n]|\\.)*"|`[^`]*`', lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text)
+        funcs = [f.start() for f in re.finditer(r'(?m)^func\b', code)] + [len(code)]
+        def named_in(pos):
+            start = max([f for f in funcs if f <= pos], default=0)
+            end = min(f for f in funcs if f > pos)
+            return {n for n in re.findall(r'\b(\w+Kind)\b', code[start:end]) if n in crds}
+        for m in LIST_QUERY.finditer(text):
+            body = braced(text, m.end() - 1)
+            g = QUERY_GVR.search(body)
+            if not g:
+                extra.unplaced.append((at(m.start()), "a ListQuery naming no GVR: " + " ".join(body.split())[:120]))
+                continue
+            expr = g.group(1).strip()
+            if expr in gvr_vars:
+                group, resource = gvr_vars[expr]
+                extra.found[(group, resource, "list")].add(at(m.start()))
+            elif expr == "crd.GVR()" and named_in(m.start()):
+                for name in named_in(m.start()):
+                    group, resource = crds[name]
+                    extra.found[(group, resource, "list")].add(at(m.start()))
+            elif (rel, expr) in EXTRA_GVRS:
+                place = EXTRA_GVRS[(rel, expr)]
+                if place == "any-kind":
+                    extra.found[("*", "*", "list")].add(at(m.start()))
+                    continue
+                for name in place:
+                    if name not in gvr_vars:
+                        extra.unplaced.append((at(m.start()), f"EXTRA_GVRS names {name}, which the extra does not spell out"))
+                        continue
+                    group, resource = gvr_vars[name]
+                    extra.found[(group, resource, "list")].add(at(m.start()))
+            else:
+                extra.unplaced.append((at(m.start()), "a ListQuery GVR this scan cannot place: " + expr))
+
+    for t, where in extra.scan.found.items():
+        extra.found[t] |= where
+    extra.unplaced += extra.scan.unplaced
+
+
+def scan_extras(core):
+    """{key: Extra} for every extra cmd/kubetower/main.go compiles in, and the
+    directories under extras/ it does not."""
+    main = os.path.join(core, "cmd", "kubetower", "main.go")
+    imported = []
+    if os.path.exists(main):
+        with open(main, encoding="utf-8") as f:
+            imported = EXTRA_IMPORT.findall(f.read())
+    extras, left = {}, []
+    root = os.path.join(core, "extras")
+    present = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))) if os.path.isdir(root) else []
+    left = [d for d in present if d not in imported]
+    for directory in imported:
+        files = []
+        for rel, path in go_files(core, under=f"extras/{directory}"):
+            with open(path, encoding="utf-8") as f:
+                files.append((rel, f.read()))
+        keys = {k for rel, text in files if rel.count("/") == 2 for k in EXTRA_KEY.findall(text)}
+        if len(keys) != 1:
+            print(f"extras/{directory} is compiled in and declares {sorted(keys) or 'no'} `const Key` - "
+                  "the scan cannot tell which key values.yaml names it by", file=sys.stderr)
+            sys.exit(2)
+        extra = Extra(keys.pop(), directory)
+        scan_extra_files(extra, files)
+        extras[extra.key] = extra
+    return extras, left
+
+
+def compare_extras(extras, needs):
+    """(unlisted, unasked, unknown): an extra's requests the list does not grant
+    it, lines and `extras:` names no request of that extra's accounts for, and
+    keys the list names that the binary does not compile in."""
+    own, uses = defaultdict(dict), defaultdict(list)
+    unknown = set()
+    for need in needs:
+        sw = need["switch"]
+        if sw.startswith("extras."):
+            key = sw.removeprefix("extras.")
+            for verb in need["verbs"]:
+                own[key][(need["group"], need["resource"], verb)] = need
+            if key not in extras:
+                unknown.add(key)
+        for key in need.get("extras") or []:
+            uses[key].append(need)
+            if key not in extras:
+                unknown.add(key)
+    used = lambda key: {(n["group"], n["resource"], v) for n in uses[key] for v in n["verbs"]}
+    unlisted, unasked = [], []
+    for key, extra in sorted(extras.items()):
+        for t in sorted(extra.found):
+            if t not in own[key] and t not in used(key):
+                unlisted.append((key, t, extra.found[t]))
+    for key in sorted(own):
+        for t, need in sorted(own[key].items()):
+            if key in extras and t not in extras[key].found:
+                unasked.append((key, t, need["switch"]))
+    for key in sorted(uses):
+        for need in uses[key]:
+            if key in extras and not any((need["group"], need["resource"], v) in extras[key].found for v in need["verbs"]):
+                unasked.append((key, (need["group"], need["resource"], "/".join(need["verbs"])), f"{need['switch']}, extras: [{key}]"))
+    return unlisted, unasked, sorted(unknown)
+
+
 def derived(scan):
     """(requests, choices): every request the source makes, mapped to where;
     and the writes the source can make on any listed kind, of which the list
@@ -447,6 +674,8 @@ def compare(requests, choices, needs):
     lines in the list the source never asks for."""
     listed = {}
     for need in needs:
+        if need["switch"].startswith("extras."):
+            continue  # an extra's own grant: compare_extras
         for verb in need["verbs"]:
             listed[(need["group"], need["resource"], verb)] = need
     unlisted = sorted(k for k in requests if k not in listed)
@@ -475,6 +704,74 @@ PROBES = [
     ("a raw REST request on a new subresource", 'r := c.CoreV1().RESTClient().Post().Resource("pods").Name(p).SubResource("attach")\n'),
     ("a dynamic call on a resource known only at run time", 'l, err := dyn.Resource(somethingElse).List(ctx, opts)\n'),
 ]
+
+
+# Extra files a change to an extra could add, each a request the list does
+# not grant it. The extras' scan must refuse every one.
+EXTRA_PROBES = [
+    ("a ListQuery on a resource nothing grants",
+     'var revisionsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "controllerrevisions"}\n'
+     'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: revisionsGVR}) }\n'),
+    ("a ListQuery on an expression the scan cannot place",
+     'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: somewhere.gvr}) }\n'),
+    ("crd.GVR() in a file naming no custom resource",
+     'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: crd.GVR()}) }\n'),
+    ("crd.GVR() in a function naming no kind, beside one that does",
+     'const KustomizationKind = "kustomizations.kustomize.toolkit.fluxcd.io"\n'
+     'func g() string { return "Flux, serving " + KustomizationKind }\n'
+     'func f(h extension.Host) { h.List(r, c, extension.ListQuery{GVR: crd.GVR()}) }\n'),
+    ("a Host method the scan does not know",
+     'func f(h extension.Host) { h.Exec(r, c, "ns", "pod") }\n'),
+    ("a typed write", 'func f(c kubernetes.Interface) { c.CoreV1().Secrets(ns).Delete(ctx, n, opts) }\n'),
+]
+
+
+# Probes the scan must refuse by not placing them, rather than by crediting a
+# request to the probe: a request credited is the very mistake they test for.
+MUST_BE_UNPLACED = {"crd.GVR() in a file naming no custom resource",
+                    "crd.GVR() in a function naming no kind, beside one that does"}
+
+
+def self_test_extras(extras, needs):
+    """Prove the extras' comparison refuses a list that grants an extra too
+    little, a line or an `extras:` name nobody asks for, and an unknown key;
+    and that the extras' scan refuses each probe."""
+    if not extras:
+        raise SystemExit("the console compiles in no extra, so the extras' self-test has nothing to remove")
+    key = sorted(extras)[0]
+    probe = sorted(extras[key].found)[0]
+    less = []
+    for n in needs:
+        if n["switch"] == f"extras.{key}" or key in (n.get("extras") or []):
+            if any((n["group"], n["resource"], v) == probe for v in n["verbs"]):
+                if n["switch"] == f"extras.{key}":
+                    n = dict(n, verbs=[v for v in n["verbs"] if (n["group"], n["resource"], v) != probe])
+                else:
+                    n = dict(n, extras=[k for k in n["extras"] if k != key])
+        less.append(n)
+    unlisted, _, _ = compare_extras(extras, less)
+    if not any(k == key and t == probe for k, t, _ in unlisted):
+        raise SystemExit(f"the comparison accepted a list that does not grant {key} its {name(probe)}")
+    more = needs + [
+        {"switch": f"extras.{key}", "group": "apps", "resource": "controllerrevisions", "verbs": ["list"], "source": "self-test"},
+        {"switch": "rbac.exec", "group": "", "resource": "pods/attach", "verbs": ["create"], "extras": [key], "source": "self-test"},
+        {"switch": "extras.no-such-extra", "group": "", "resource": "pods", "verbs": ["list"], "source": "self-test"},
+    ]
+    _, unasked, unknown = compare_extras(extras, more)
+    if len([u for u in unasked if u[1][1] in {"controllerrevisions", "pods/attach"}]) != 2 or "no-such-extra" not in unknown:
+        raise SystemExit(f"the comparison accepted a line, an extras: name or a key nobody asks for: {unasked} {unknown}")
+
+    for label, text in EXTRA_PROBES:
+        extra = Extra("probe", "probe")
+        scan_extra_files(extra, [("extras/probe/probe.go", "package probe\n\n" + text)])
+        unlisted, _, _ = compare_extras({"probe": extra}, needs)
+        if not extra.unplaced and not unlisted:
+            raise SystemExit(f"the extras' scan accepted {label}")
+        if label in MUST_BE_UNPLACED and (not extra.unplaced or extra.found):
+            raise SystemExit(f"the extras' scan read {label} as {sorted(extra.found)} rather than refusing to place it")
+    print(f"ok    self-test - a list not granting {key} its {name(probe)} refused, a line, an extras: name and a key "
+          f"nobody asks for refused, and {len(EXTRA_PROBES)} probe files refused by the extras' scan")
+    print()
 
 
 def self_test(requests, choices, needs):
@@ -522,17 +819,28 @@ def main():
 
     scan = scan_core(args.core)
     requests, choices = derived(scan)
+    extras, left = scan_extras(args.core)
     commit = (doc.get("derivedFrom") or {}).get("commit", "?")
     print(f"read {scan.files} Go files of the console (the list says {commit}); "
           f"{len(scan.listed)} list pages, {len(requests)} requests, "
           f"{len(choices)} writes the chart may choose from")
 
+    for key, extra in sorted(extras.items()):
+        print(f"read extras/{extra.directory} as the extra {key!r}: {len(extra.found)} requests")
+    for directory in left:
+        print(f"note  extras/{directory} is not compiled into cmd/kubetower, and was not read")
+
     if args.self_test:
         self_test(requests, choices, needs)
+        self_test_extras(extras, needs)
 
     if args.print:
         for t in sorted(requests):
             print(f"        {name(t):70} {', '.join(sorted(requests[t])[:3])}")
+        for key, extra in sorted(extras.items()):
+            print(f"      the extra {key!r}:")
+            for t in sorted(extra.found):
+                print(f"        {name(t):70} {', '.join(sorted(extra.found[t])[:3])}")
 
     ok = True
     missing_kinds = sorted(scan.kinds - {r for _, r in scan.listed})
@@ -555,6 +863,32 @@ def main():
     for t, need in unasked:
         print(f"        never asked for: {name(t)}  ({need['switch']})")
     ok = ok and not unlisted and not unasked
+
+    stale = sorted({t for t, _ in HOST_METHODS.items() for t in _} - set(requests))
+    if stale:
+        ok = False
+        print(f"FAIL  HOST_METHODS expands a Host method to {len(stale)} request(s) the console's own code no longer makes - "
+              "the table is behind the source:")
+        for t in stale:
+            print(f"        {name(t)}")
+    unplaced = [u for e in extras.values() for u in e.unplaced]
+    if unplaced:
+        ok = False
+        print(f"FAIL  {len(unplaced)} site(s) in the extras this scan cannot read:")
+        for where, what in unplaced:
+            print(f"        {where}  {what}")
+    e_unlisted, e_unasked, unknown = compare_extras(extras, needs)
+    print(f"{'FAIL' if e_unlisted else 'ok  '}  every request an extra makes is granted to it in {args.needs}"
+          + (f" - {len(e_unlisted)} missing" if e_unlisted else ""))
+    for key, t, where in e_unlisted:
+        print(f"        not granted to {key}: {name(t)}  ({', '.join(sorted(where)[:2])})")
+    print(f"{'FAIL' if e_unasked else 'ok  '}  every line for an extra is a request that extra makes"
+          + (f" - {len(e_unasked)} it never makes" if e_unasked else ""))
+    for key, t, where in e_unasked:
+        print(f"        {key} never asks for: {name(t)}  ({where})")
+    if unknown:
+        print(f"FAIL  the list names extras the console does not compile in: {unknown}")
+    ok = ok and not e_unlisted and not e_unasked and not unknown
     sys.exit(0 if ok else 1)
 
 

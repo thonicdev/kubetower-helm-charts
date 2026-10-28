@@ -51,6 +51,8 @@ EVERYTHING_ON = [
     "rbac.write=true", "rbac.exec=true", "rbac.nodeProxy=true",
     "rbac.customResources=true", "rbac.readSecrets=true", "rbac.metrics=true",
     "rbac.prometheusProxy=true",
+    # Every extra the console carries, so their own grants are checked too.
+    "extras={argocd,kubecron,kubeadjust,redis}",
 ]
 
 

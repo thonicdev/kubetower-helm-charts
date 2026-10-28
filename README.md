@@ -340,6 +340,23 @@ If `extraEnv` sets `KT_EXTRAS` as well, the `extraEnv` entry wins and the chart
 leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;
 NOTES says so when both are set.
 
+**`extras` also decides what the role grants the extra pages.** The console
+built from [thonicdev/kubetower](https://github.com/thonicdev/kubetower)
+carries four: `argocd`, `kubecron`, `kubeadjust` and `redis`. What each reads
+is in `charts/kubetower/console-needs.yaml`; the ClusterRole grants an extra's
+own reads only while `extras` names it - the role follows `extras`, not a
+`KT_EXTRAS` set through `extraEnv`, so a page turned on that way alone is
+refused by the cluster. Reads of kinds the console shows anyway stay behind
+`rbac.read`, and anything stronger stays behind its own switch: naming an
+extra never grants a Secret, a port-forward or a proxy.
+
+| Extra | Granted when `extras` names it | Also needs |
+|---|---|---|
+| `argocd` | `list` Argo CD Applications, ApplicationSets, AppProjects; Flux Kustomizations, HelmReleases | `rbac.customResources` for its tab on a custom resource's page; `rbac.readSecrets` and `rbac.exec` for Argo CD's own diff (a token Secret, and a tunnel to argocd-server) |
+| `kubeadjust` | `list` VerticalPodAutoscalers | `rbac.metrics` for live usage; `rbac.prometheusProxy` or `rbac.exec` for the six-hour window; `rbac.nodeProxy` for disk usage |
+| `kubecron` | nothing of its own: CronJobs, Jobs, Pods and Services are `rbac.read`'s | `rbac.exec` for the tunnel to its collector; `rbac.readSecrets` when the collector asks for a token |
+| `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
+
 ### When the audit log stops writing
 
 The console records every act it performs in its audit log, on its standard
@@ -578,12 +595,16 @@ source at the commit the list names and fails when the source makes a request
 the list lacks, or the list names one the source never makes. Writes are the
 exception, by design: the editor reaches any kind the console lists, so the
 kinds `rbac.write` grants are this chart's choice, and the check only asks that
-each be a kind the console lists and a verb it writes with. CI runs it wherever
-the console's repository is readable from the workflow, and says NOT RUN where
-it is not. Locally, with the console checked out beside this repository:
+each be a kind the console lists and a verb it writes with. The extras are
+read apart, each under its key: every request an extra makes must be granted to
+it, by a line of its own (`switch: extras.<key>`) or by a line of the console's
+that names it under `extras:`. CI runs it, and **fails** where the console's
+repository is not readable from the workflow - a check that did not compare
+anything is not a pass. Locally, with the console checked out beside this
+repository at the commit the list names:
 
 ```bash
-python test/derive-needs.py --core ../kubetower
+python test/derive-needs.py --self-test --core ../kubetower
 ```
 
 **It is a best-effort check, not a proof.** It reads Go as text, with
