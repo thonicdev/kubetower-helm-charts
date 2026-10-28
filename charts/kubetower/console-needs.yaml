@@ -47,10 +47,28 @@
 # console lists and each verb one it writes with, not that every kind is here.
 #
 # `group` is the API group, "" for the core group.
+#
+# **The extras.** The console compiles in extra pages (extras/ in its source:
+# argocd, kubecron, kubeadjust, redis), each off until `extras` in values.yaml
+# names it. What an extra reads is listed two ways:
+#
+#   switch: extras.<key>   a request only that extra makes. Granted when
+#                          `extras` names the key, and only then - whatever
+#                          the rbac switches say.
+#   extras: [<key>, ...]   on a line of the console's own, the extras that
+#                          make that request as well. It stays behind the
+#                          line's own switch: naming an extra never grants a
+#                          Secret, a shell, a port-forward or a proxy. An
+#                          extra that needs one says so on its page when the
+#                          switch is off; the README lists which.
+#
+# test/derive-needs.py reads each extra apart from the rest of the console and
+# fails when an extra makes a request no line grants it either way, or when a
+# line names an extra that never makes it.
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: 70b0ec76f904eaa3440d717390310fa39d8b27e2
+  commit: 2d87a60e2315bbb722440c94f836941be23aa9a1
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -64,14 +82,14 @@ needs:
 
   # The list pages, one per kind (internal/resources/kinds.go and fetch.go), and
   # the drawer's get of one object of any of them (internal/detail/detail.go).
-  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, kubeadjust, kubecron, redis], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
-  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, kubeadjust, kubecron, redis], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: events, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: events, verbs: [get, list], extras: [argocd], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: persistentvolumes, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: replicationcontrollers, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: serviceaccounts, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
@@ -82,14 +100,14 @@ needs:
   - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: daemonsets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   # Also the rollout history (internal/changes/changes.go).
-  - {switch: rbac.read, group: apps, resource: replicasets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go; internal/changes/changes.go"}
-  - {switch: rbac.read, group: batch, resource: jobs, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: batch, resource: cronjobs, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: apps, resource: replicasets, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go; internal/changes/changes.go"}
+  - {switch: rbac.read, group: batch, resource: jobs, verbs: [get, list], extras: [kubeadjust, kubecron], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: batch, resource: cronjobs, verbs: [get, list], extras: [kubecron], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: networking.k8s.io, resource: ingresses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: networking.k8s.io, resource: ingressclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: networking.k8s.io, resource: networkpolicies, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: discovery.k8s.io, resource: endpointslices, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: autoscaling, resource: horizontalpodautoscalers, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: discovery.k8s.io, resource: endpointslices, verbs: [get, list], extras: [redis], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: autoscaling, resource: horizontalpodautoscalers, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: policy, resource: poddisruptionbudgets, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: scheduling.k8s.io, resource: priorityclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: node.k8s.io, resource: runtimeclasses, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
@@ -107,7 +125,7 @@ needs:
   # The CRD list, which is how the console knows what custom resources exist and
   # which columns to render. Reading the definitions does not grant reading the
   # objects; that is rbac.customResources below.
-  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [list], source: "internal/customresources/customresources.go"}
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [list], extras: [argocd], source: "internal/customresources/customresources.go"}
 
   # Secrets, and this is the line to think about before the others.
   #
@@ -119,12 +137,12 @@ needs:
   # It is cluster-wide read of every Secret in the cluster, this release's own
   # included. Set rbac.readSecrets=false to drop it; those two pages then report
   # a denial, which is at least an honest one. It applies only with rbac.read.
-  - {switch: rbac.readSecrets, group: "", resource: secrets, verbs: [get, list], source: "internal/resources/fetch.go; internal/helm/helm.go; internal/detail/envfrom.go"}
+  - {switch: rbac.readSecrets, group: "", resource: secrets, verbs: [get, list], extras: [argocd, kubecron, redis], source: "internal/resources/fetch.go; internal/helm/helm.go; internal/detail/envfrom.go"}
 
   # The CPU and memory columns. Answers only where metrics-server is installed;
   # where it is not, the console says "no metrics backend", which is a different
   # fact from being refused. Lists only: nothing asks for one object's figures.
-  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], source: "internal/metrics/usage.go; internal/metrics/container.go; internal/overview/metrics.go"}
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], extras: [kubeadjust], source: "internal/metrics/usage.go; internal/metrics/container.go; internal/overview/metrics.go"}
   - {switch: rbac.metrics, group: metrics.k8s.io, resource: nodes, verbs: [list], source: "internal/metrics/usage.go"}
 
   # Every custom resource in the cluster, read-only.
@@ -135,7 +153,7 @@ needs:
   # "read every object of every kind", which includes any CRD that stores a
   # credential in its spec. Off by default for that reason. test/rbac-check.py
   # permits exactly this wildcard and no other.
-  - {switch: rbac.customResources, group: "*", resource: "*", verbs: [get, list], source: "internal/customresources/customresources.go"}
+  - {switch: rbac.customResources, group: "*", resource: "*", verbs: [get, list], extras: [argocd], source: "internal/customresources/customresources.go"}
 
   # Writes. The drawer's manifest editor (a merge patch, internal/edit), the
   # create and Delete controls, and the actions in internal/actions: restart and
@@ -185,7 +203,7 @@ needs:
   # the service proxy is refused. `get` is the WebSocket upgrade's verb; see the
   # top of this file.
   - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create, get], source: "internal/terminal/exec.go"}
-  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
+  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], extras: [argocd, kubeadjust, kubecron, redis], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
 
   # Prometheus, through the API server's service proxy
   # (/api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The console only
@@ -196,9 +214,28 @@ needs:
   # cluster network. The chart cannot know where Prometheus runs, so the
   # narrowing is yours: rbac.prometheusProxyServices names the Services, in the
   # `<name>:<port>` form the console requests, as resourceNames.
-  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, source: "internal/metrics/prom.go"}
+  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, extras: [kubeadjust], source: "internal/metrics/prom.go"}
 
   # The kubelet's own stats API, through the API server's node proxy. It is a
   # proxy to every kubelet on every node - a far wider capability than the page
   # that uses it needs to imply.
-  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], source: "internal/kubeletstats/kubeletstats.go"}
+  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], extras: [kubeadjust], source: "internal/kubeletstats/kubeletstats.go"}
+
+  # The extras' own requests: the custom resources of the tools they show.
+  # Each is a list and nothing else - an extra reads through the console's
+  # list, which asks the cluster whether the person signed in may first - and
+  # each is granted only while `extras` names the extra.
+  #
+  # argocd: Argo CD's Applications, ApplicationSets and AppProjects, and Flux
+  # CD's Kustomizations and HelmReleases, which the same page shows. Its tab
+  # on every other page reads the object on screen, which is a list page of
+  # the console's (rbac.read) or a custom resource (rbac.customResources).
+  - {switch: extras.argocd, group: argoproj.io, resource: applications, verbs: [list], source: "extras/argocd/delivery.go; extras/argocd/application.go; extras/argocd/column.go; extras/argocd/tracked.go"}
+  - {switch: extras.argocd, group: argoproj.io, resource: applicationsets, verbs: [list], source: "extras/argocd/overview.go"}
+  - {switch: extras.argocd, group: argoproj.io, resource: appprojects, verbs: [list], source: "extras/argocd/overview.go; extras/argocd/events.go"}
+  - {switch: extras.argocd, group: kustomize.toolkit.fluxcd.io, resource: kustomizations, verbs: [list], source: "extras/argocd/flux.go"}
+  - {switch: extras.argocd, group: helm.toolkit.fluxcd.io, resource: helmreleases, verbs: [list], source: "extras/argocd/flux.go"}
+  # kubeadjust: the VerticalPodAutoscalers, so a workload one already sizes is
+  # not argued with. A cluster without the VPA answers "not found", which the
+  # page reads as none.
+  - {switch: extras.kubeadjust, group: autoscaling.k8s.io, resource: verticalpodautoscalers, verbs: [list], source: "extras/kubeadjust/kubeadjust.go"}

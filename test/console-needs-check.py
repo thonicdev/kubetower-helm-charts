@@ -30,8 +30,16 @@ both ways:
    the defaults grant none of their requests - otherwise a switch documented as
    off would be on in all but name.
 
-And every switch the list names must be a value under `rbac`, or `always`: the
-template refuses an unknown one, and so does this.
+4. **An extra's own grants follow `extras`.** A line whose switch is
+   `extras.<key>` is granted when `extras` names the key and not otherwise,
+   whatever the rbac switches say. Rendered with no extra, each extra alone,
+   all of them, and all of them with rbac.read off; and with
+   `extras: [argocd, kubecron, kubeadjust]`, the role is asserted to hold the
+   custom-resource reads those pages are built on (EXTRA_GRANTS), so a list
+   that drops them fails here and not only in a cluster.
+
+And every switch the list names must be a value under `rbac`, `always`, or
+`extras.<key>`: the template refuses an unknown rbac switch, and so does this.
 
 Whether the list itself matches the console's source is test/derive-needs.py's
 question, not this one's.
@@ -51,14 +59,28 @@ OFF_BY_DEFAULT = {
     "rbac.customResources",
 }
 
+# What `extras: [argocd, kubecron, kubeadjust]` must grant beyond the rbac
+# switches: the reads the Argo CD and KubeAdjust pages cannot work without.
+# KubeCron reads nothing of its own - CronJobs, Jobs, Pods and Services, all
+# rbac.read's - so it adds no rule, and that is asserted too.
+EXTRA_GRANTS = {
+    ("argoproj.io", "applications", "list", ()),
+    ("argoproj.io", "applicationsets", "list", ()),
+    ("argoproj.io", "appprojects", "list", ()),
+    ("kustomize.toolkit.fluxcd.io", "kustomizations", "list", ()),
+    ("helm.toolkit.fluxcd.io", "helmreleases", "list", ()),
+    ("autoscaling.k8s.io", "verticalpodautoscalers", "list", ()),
+}
+
 # The chart refuses to render without an image it can name; the tag is
 # irrelevant to the role.
 BASE = ["image.tag=0.0.0-check"]
 
 
-def render(chart, rbac):
-    """The ClusterRole's rules, as Helm renders them with these rbac values."""
-    values = yaml.safe_dump({"rbac": rbac})
+def render(chart, rbac, extras=()):
+    """The ClusterRole's rules, as Helm renders them with these rbac values
+    and this `extras` list."""
+    values = yaml.safe_dump({"rbac": rbac, "extras": list(extras)})
     out = subprocess.run(
         ["helm", "template", "kubetower", chart, "--show-only", "templates/rbac.yaml",
          "--values", "-"] + [arg for s in BASE for arg in ("--set", s)],
@@ -85,10 +107,12 @@ def granted(role):
     return out
 
 
-def switch_on(switch, rbac):
+def switch_on(switch, rbac, extras=()):
     """The template's own reading of a switch (kubetower.rbacSwitch)."""
     if switch == "always":
         return True
+    if switch.startswith("extras."):
+        return switch.removeprefix("extras.") in extras
     key = switch.removeprefix("rbac.")
     if key == switch or key not in rbac:
         raise SystemExit(f"the list names the switch {switch!r}, which is not a value under rbac")
@@ -97,12 +121,12 @@ def switch_on(switch, rbac):
     return bool(rbac[key])
 
 
-def expected(needs, rbac):
+def expected(needs, rbac, extras=()):
     """Every (group, resource, verb, names) the list asks for with these values,
     mapped to the line that asks for it."""
     out = {}
     for need in needs:
-        if not switch_on(need["switch"], rbac):
+        if not switch_on(need["switch"], rbac, extras):
             continue
         names = ()
         if need.get("resourceNamesFrom"):
@@ -112,10 +136,10 @@ def expected(needs, rbac):
     return out
 
 
-def compare(role, needs, rbac):
+def compare(role, needs, rbac, extras=()):
     """(missing, extra): what the list asks for and the role does not grant,
     and what the role grants that the list does not ask for."""
-    want = expected(needs, rbac)
+    want = expected(needs, rbac, extras)
     have = granted(role)
     missing = sorted(((k, v) for k, v in want.items() if k not in have), key=lambda kv: kv[0])
     extra = sorted(have - set(want))
@@ -132,7 +156,8 @@ def combinations(defaults, needs):
     """The switch settings the role is rendered with: the defaults, each switch
     alone beside rbac.read, everything on, everything off, the Secrets switch
     without rbac.read, and the service proxy narrowed."""
-    switches = sorted({n["switch"].removeprefix("rbac.") for n in needs} - {"always"})
+    switches = sorted({n["switch"].removeprefix("rbac.") for n in needs}
+                      - {"always"} - {n["switch"] for n in needs if n["switch"].startswith("extras.")})
     out = [("defaults", {})]
     out += [(f"rbac.{s} on", {"read": True, s: True}) for s in switches]
     out += [
@@ -142,7 +167,18 @@ def combinations(defaults, needs):
         ("rbac.prometheusProxy narrowed to one Service",
          {"prometheusProxy": True, "prometheusProxyServices": ["prometheus-server:80"]}),
     ]
-    return [(label, {**defaults, **sets}) for label, sets in out]
+    return [(label, {**defaults, **sets}, ()) for label, sets in out] + extra_combinations(defaults, needs)
+
+
+def extra_combinations(defaults, needs):
+    """The extras the role is rendered with: each alone, all of them, and all
+    of them with rbac.read off - an extra's own grant does not lean on it."""
+    keys = sorted({n["switch"].removeprefix("extras.") for n in needs if n["switch"].startswith("extras.")}
+                  | {k for n in needs for k in n.get("extras") or []})
+    out = [(f"extras: [{k}]", defaults, (k,)) for k in keys]
+    out += [(f"extras: {keys}", defaults, tuple(keys)),
+            (f"extras: {keys}, rbac.read off", {**defaults, "read": False}, tuple(keys))]
+    return out
 
 
 def check(chart, needs):
@@ -153,9 +189,9 @@ def check(chart, needs):
     for need in needs:
         switch_on(need["switch"], defaults)  # refuses a switch values.yaml does not have
 
-    for label, rbac in combinations(defaults, needs):
-        missing, extra = compare(render(chart, rbac), needs, rbac)
-        total = len(expected(needs, rbac))
+    for label, rbac, extras in combinations(defaults, needs):
+        missing, extra = compare(render(chart, rbac, extras), needs, rbac, extras)
+        total = len(expected(needs, rbac, extras))
         bad = bool(missing or extra)
         ok = ok and not bad
         print(f"{'FAIL' if bad else 'ok  '}  {label} - {total - len(missing)} of {total} requests granted, "
@@ -164,6 +200,24 @@ def check(chart, needs):
             print(f"        not granted: {name(grant)}  ({need['switch']}; {need['source']})")
         for grant in extra:
             print(f"        granted, never asked for: {name(grant)}")
+
+    asked = ("argocd", "kubecron", "kubeadjust")
+    with_extras = granted(render(chart, defaults, asked))
+    without = granted(render(chart, defaults))
+    kubecron_alone = granted(render(chart, defaults, ("kubecron",)))
+    absent = sorted(EXTRA_GRANTS - with_extras)
+    leaked = sorted(EXTRA_GRANTS & without)
+    bad = bool(absent or leaked or kubecron_alone != without)
+    ok = ok and not bad
+    print(f"{'FAIL' if bad else 'ok  '}  extras: {list(asked)} - {len(EXTRA_GRANTS) - len(absent)} of "
+          f"{len(EXTRA_GRANTS)} reads the pages need granted, none of them without the extras, "
+          f"and kubecron alone adds {len(kubecron_alone - without)} rule(s)")
+    for grant in absent:
+        print(f"        not granted with the extras: {name(grant)}")
+    for grant in leaked:
+        print(f"        granted without the extras: {name(grant)}")
+    for grant in sorted(kubecron_alone ^ without):
+        print(f"        kubecron changes the role: {name(grant)}")
 
     off = [n for n in needs if n["switch"] in OFF_BY_DEFAULT]
     on_by_default = sorted(s for s in OFF_BY_DEFAULT if defaults.get(s.removeprefix("rbac.")))
@@ -219,6 +273,15 @@ def self_test():
     missing, extra = compare([], [need], {"write": False})
     if missing or extra:
         raise SystemExit("the check asked for a request whose switch is off")
+    crd = {"switch": "extras.argocd", "group": "argoproj.io", "resource": "applications",
+           "verbs": ["list"], "source": "self-test"}
+    crd_rule = {"apiGroups": ["argoproj.io"], "resources": ["applications"], "verbs": ["list"]}
+    if not compare([], [crd], {}, ("argocd",))[0]:
+        raise SystemExit("the check accepted a role without an extra's own grant while extras names it")
+    if not compare([crd_rule], [crd], {}, ())[1]:
+        raise SystemExit("the check accepted an extra's own grant while extras does not name it")
+    if any(compare([crd_rule], [crd], {}, ("argocd",))):
+        raise SystemExit("the check refused an extra's own grant while extras names it")
     try:
         switch_on("rbac.wirte", {"write": True})
     except SystemExit:
@@ -226,7 +289,7 @@ def self_test():
     else:
         raise SystemExit("the check accepted a switch that is not a value")
     print(f"ok    self-test - {len(short)} roles granting too little and {len(over)} granting too much "
-          "refused, a misspelt switch refused, the exact grant accepted")
+          "refused, an extra's grant held to `extras` both ways, a misspelt switch refused, the exact grant accepted")
     print()
 
 

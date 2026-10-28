@@ -8,6 +8,9 @@ the source file that makes it. This template writes it out as rules and adds
 nothing of its own: one rule per switch, API group, verb set and narrowing,
 in the order the file lists them. Read the file for why each grant exists.
 
+An extra's own lines (`switch: extras.<key>`) are granted while `extras`
+names that extra, and only then.
+
 test/console-needs-check.py renders this role with each switch and fails when
 it grants less than the file asks for or more than it names.
 test/derive-needs.py reads the console's source and fails when the file and
@@ -29,7 +32,7 @@ anybody gets; with the shared password, its holder gets all of it.
 {{- $order := list }}
 {{- $rules := dict }}
 {{- range $needs }}
-{{- if eq (include "kubetower.rbacSwitch" (dict "switch" .switch "rbac" $.Values.rbac)) "true" }}
+{{- if eq (include "kubetower.rbacSwitch" (dict "switch" .switch "rbac" $.Values.rbac "extras" $.Values.extras)) "true" }}
 {{- $names := list }}
 {{- with .resourceNamesFrom }}
 {{- $names = index $.Values.rbac . | default list }}
