@@ -726,6 +726,12 @@ EXTRA_PROBES = [
 ]
 
 
+# Probes the scan must refuse by not placing them, rather than by crediting a
+# request to the probe: a request credited is the very mistake they test for.
+MUST_BE_UNPLACED = {"crd.GVR() in a file naming no custom resource",
+                    "crd.GVR() in a function naming no kind, beside one that does"}
+
+
 def self_test_extras(extras, needs):
     """Prove the extras' comparison refuses a list that grants an extra too
     little, a line or an `extras:` name nobody asks for, and an unknown key;
@@ -761,6 +767,8 @@ def self_test_extras(extras, needs):
         unlisted, _, _ = compare_extras({"probe": extra}, needs)
         if not extra.unplaced and not unlisted:
             raise SystemExit(f"the extras' scan accepted {label}")
+        if label in MUST_BE_UNPLACED and (not extra.unplaced or extra.found):
+            raise SystemExit(f"the extras' scan read {label} as {sorted(extra.found)} rather than refusing to place it")
     print(f"ok    self-test - a list not granting {key} its {name(probe)} refused, a line, an extras: name and a key "
           f"nobody asks for refused, and {len(EXTRA_PROBES)} probe files refused by the extras' scan")
     print()
