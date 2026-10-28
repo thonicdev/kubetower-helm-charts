@@ -598,9 +598,11 @@ kinds `rbac.write` grants are this chart's choice, and the check only asks that
 each be a kind the console lists and a verb it writes with. The extras are
 read apart, each under its key: every request an extra makes must be granted to
 it, by a line of its own (`switch: extras.<key>`) or by a line of the console's
-that names it under `extras:`. CI runs it, and **fails** where the console's
-repository is not readable from the workflow - a check that did not compare
-anything is not a pass. Locally, with the console checked out beside this
+that names it under `extras:`. CI runs it, reading the private console with
+the repository secret `KUBETOWER_READ_TOKEN` (a fine-grained token, `Contents:
+read` on `thonicdev/kubetower` only), and **fails** where it cannot: no token,
+as on a pull request from a fork, which gets no secrets, or a token refused - a
+check that did not compare anything is not a pass. Locally, with the console checked out beside this
 repository at the commit the list names:
 
 ```bash
