@@ -68,7 +68,10 @@ image:
 # console's state directory is its own, so the console does not offer what only
 # one pod could hold - the preference writes (rail, columns, density), the
 # settings writes, the per-cluster extension switches and port-forwards are not
-# registered, and the archive is off. Every replica draws the defaults.
+# registered, and the archive is off. Every replica draws the defaults. So an
+# extra page named in `extras` cannot be turned on or off per cluster: its tab
+# in Settings > Extra is a view, and only the values decide. That toggle needs
+# one replica and its state volume (`persistence`).
 #
 # **Refused at install** rather than half-working: several replicas with
 # `persistence.enabled` (one volume cannot be two consoles' state), with
@@ -456,7 +459,7 @@ claude:
   readOnly: true
   permissionMode: ""
 
-# The extra pages this console turns on, by key - for example
+# The extra pages this console may turn on, by key - for example
 # `extras: [first-page, second-page]`, or `--set extras='{first-page}'`. A list
 # of lower-case keys and nothing else; values.schema.json refuses the rest.
 # Which keys exist depends on the console's build: the console names the ones
@@ -468,10 +471,19 @@ claude:
 # restarts the pod: the console reads KT_EXTRAS once, at start. Empty, neither
 # the ConfigMap nor the variable is rendered.
 #
-# Every key named is on, for every cluster the console shows. Under the server
-# profile this list is the only switch there is - the console's Settings page
-# shows what it turned on and offers no control. A key the console's build
-# does not carry is logged at start and ignored; it does not stop the console.
+# A key named here may be turned on; none is turned on by being named. Each
+# starts off on every cluster, until somebody holding the verb `use` on
+# `extras.kubetower.dev/<key>` (a ClusterRole the cluster's owner writes; the
+# README shows one) turns it on for that cluster in Settings > Extra, where
+# they may also change its own settings. An extra the build carries and this
+# list does not name is listed there with its button disabled and the reason.
+# A key the console's build does not carry is logged at start and ignored; it
+# does not stop the console.
+#
+# **Turning one on per cluster needs replicaCount 1 and persistence**: the
+# choice is kept in the state directory, and lost at a restart without the
+# PersistentVolumeClaim. With several replicas the console withholds that
+# write, Settings > Extra is a view, and only these values decide; NOTES warns.
 #
 # extraEnv setting KT_EXTRAS as well wins, and the chart then leaves this out
 # (NOTES says so), as it does for GOMEMLIMIT and auth.trustedProxies.
