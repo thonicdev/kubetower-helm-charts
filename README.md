@@ -378,12 +378,13 @@ resource that does not exist.
 
 **Turning an extra page on per cluster needs one replica and its state
 volume.** The choice is kept in the console's state directory, which is the
-chart's PersistentVolumeClaim (`persistence`); with `persistence.enabled:
-false` it is kept on an emptyDir and lost when the pod restarts. With
-`replicaCount` above one each console's state is its own, so the console
-withholds the write: Settings > Extra is a view, nobody can turn an extra page
-on or off there, and only the chart's values decide. NOTES warns when `extras`
-names a page and `replicaCount` is above one.
+chart's PersistentVolumeClaim (`persistence`). With `persistence.enabled:
+false` the chart tells the console its state does not survive a restart
+(`KT_STATE_PERSISTENT`), and with `replicaCount` above one each console's state
+is its own: in both cases the console withholds the write, Settings > Extra is
+a view with each switch disabled and the reason beside it, nobody can turn an
+extra page on or off there, and only the chart's values decide. NOTES warns
+when `extras` names a page and `replicaCount` is above one.
 
 If `extraEnv` sets `KT_EXTRAS` as well, the `extraEnv` entry wins and the chart
 leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;

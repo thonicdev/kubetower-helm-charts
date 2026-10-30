@@ -481,9 +481,10 @@ claude:
 # does not stop the console.
 #
 # **Turning one on per cluster needs replicaCount 1 and persistence**: the
-# choice is kept in the state directory, and lost at a restart without the
-# PersistentVolumeClaim. With several replicas the console withholds that
-# write, Settings > Extra is a view, and only these values decide; NOTES warns.
+# choice is kept in the state directory, the PersistentVolumeClaim. Without it,
+# or with several replicas, the console withholds that write: Settings > Extra
+# is a view, its switches disabled with the reason, and only these values
+# decide. NOTES warns about several replicas.
 #
 # extraEnv setting KT_EXTRAS as well wins, and the chart then leaves this out
 # (NOTES says so), as it does for GOMEMLIMIT and auth.trustedProxies.
