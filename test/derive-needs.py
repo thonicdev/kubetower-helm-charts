@@ -60,7 +60,9 @@ the list, under a switch other than an extra's. Every line in
 the list must be a request found - except writes, which are the chart's choice
 of kinds: the editor and Delete reach any kind the console lists, so a write in
 the list must be a kind the console lists with a verb it writes with, and that
-is all. The SelfSubjectAccessReview needs no grant (Kubernetes' own
+is all; and `delete` on every kind, `*` on `*`, is a write the list may
+choose when the source deletes at all, since Delete takes its kind at run
+time. The SelfSubjectAccessReview needs no grant (Kubernetes' own
 system:basic-user role holds it) and is not compared.
 
 Every request an extra makes must be in the list on a line whose switch is
@@ -666,6 +668,13 @@ def derived(scan):
             elif not sub:
                 for group, resource in scan.listed:
                     choices[(group, resource, verb)].add("internal/edit, internal/actions")
+                # Delete takes its kind at run time, from whatever the drawer
+                # shows - custom resources and kinds with no list page
+                # included - so `delete` on every kind (rbac.deleteAll) is a
+                # choice the source offers. Only `delete`: the editor's patch
+                # and create are not offered on every kind by this list.
+                if verb == "delete":
+                    choices[("*", "*", verb)].add("internal/edit, internal/actions")
     return requests, choices
 
 
@@ -785,10 +794,12 @@ def self_test(requests, choices, needs):
         raise SystemExit("the comparison accepted a list without `list pods`, which the console makes")
     more = needs + [{"switch": "rbac.read", "group": "", "resource": "pods", "verbs": ["watch"], "source": "self-test"},
                     {"switch": "rbac.write", "group": "apps", "resource": "deployments/scale", "verbs": ["patch"], "source": "self-test"},
-                    {"switch": "rbac.write", "group": "", "resource": "pods", "verbs": ["update"], "source": "self-test"}]
+                    {"switch": "rbac.write", "group": "", "resource": "pods", "verbs": ["update"], "source": "self-test"},
+                    {"switch": "rbac.deleteAll", "group": "*", "resource": "*", "verbs": ["patch"], "source": "self-test"}]
     _, unasked = compare(requests, choices, more)
-    if len([k for k, n in unasked if n["source"] == "self-test"]) != 3:
-        raise SystemExit(f"the comparison accepted a list asking for watch, a scale subresource or update: {unasked}")
+    if len([k for k, n in unasked if n["source"] == "self-test"]) != 4:
+        raise SystemExit(f"the comparison accepted a list asking for watch, a scale subresource, update "
+                         f"or a write other than delete on every kind: {unasked}")
 
     for label, line in PROBES:
         scan = Scan()
@@ -797,7 +808,7 @@ def self_test(requests, choices, needs):
         unlisted, _ = compare(found, {}, needs)
         if not scan.unplaced and not unlisted:
             raise SystemExit(f"the scan accepted {label}: {line.strip()}")
-    print(f"ok    self-test - a list missing a request refused, one naming watch, */scale and update refused, "
+    print(f"ok    self-test - a list missing a request refused, one naming watch, */scale, update and patch on every kind refused, "
           f"and {len(PROBES)} probe lines refused by the scan")
     print()
 
