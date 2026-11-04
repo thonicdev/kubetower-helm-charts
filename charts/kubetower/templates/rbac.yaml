@@ -20,6 +20,10 @@ Not the built-in `view` ClusterRole: it excludes Secrets, which the Secrets
 page and the Helm list both need, and it carries rules for things this console
 never asks about.
 
+Two lines are wildcards, each behind its own switch and off by default:
+rbac.customResources reads every kind, rbac.deleteAll deletes every kind.
+test/rbac-check.py permits those two and no other.
+
 Not cluster-admin. Ever. Every request the console makes is made as this
 ServiceAccount, whoever signed in: with single sign-on the console first asks
 the cluster whether that person may, so this role is the ceiling of what

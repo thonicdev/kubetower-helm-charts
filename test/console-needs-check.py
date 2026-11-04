@@ -56,7 +56,7 @@ import yaml
 # the defaults.
 OFF_BY_DEFAULT = {
     "rbac.write", "rbac.exec", "rbac.nodeProxy", "rbac.prometheusProxy",
-    "rbac.customResources",
+    "rbac.customResources", "rbac.deleteAll",
 }
 
 # What `extras: [argocd, kubecron, kubeadjust]` must grant beyond the rbac
@@ -219,6 +219,19 @@ def check(chart, needs):
     for grant in sorted(kubecron_alone ^ without):
         print(f"        kubecron changes the role: {name(grant)}")
 
+    # rbac.deleteAll, on its own terms: off, no rule deletes on a wildcard; on,
+    # exactly one rule more than the defaults, and it is `delete` on `*` in `*`.
+    wild = {"apiGroups": ["*"], "resources": ["*"], "verbs": ["delete"]}
+    plain = render(chart, defaults)
+    deleting = render(chart, {**defaults, "deleteAll": True})
+    stray = [r for r in plain if "delete" in (r.get("verbs") or [])
+             and ("*" in (r.get("apiGroups") or []) or "*" in (r.get("resources") or []))]
+    added = [r for r in deleting if r not in plain]
+    bad = bool(stray or added != [wild] or len(deleting) != len(plain) + 1)
+    ok = ok and not bad
+    print(f"{'FAIL' if bad else 'ok  '}  rbac.deleteAll - off, {len(stray)} wildcard delete rule(s); "
+          f"on, {len(added)} rule(s) more: {added}")
+
     off = [n for n in needs if n["switch"] in OFF_BY_DEFAULT]
     on_by_default = sorted(s for s in OFF_BY_DEFAULT if defaults.get(s.removeprefix("rbac.")))
     all_on = {**defaults, **{s.removeprefix("rbac."): True for s in OFF_BY_DEFAULT}}
@@ -261,6 +274,7 @@ def self_test():
         [{**exact, "resources": ["pods/eviction", "pods/attach"]}],                        # a resource more
         [exact, {"apiGroups": ["apps"], "resources": ["deployments/scale"], "verbs": ["patch"]}],  # a rule more
         [exact, {"apiGroups": ["*"], "resources": ["*"], "verbs": ["get"]}],               # a wildcard nobody asked for
+        [exact, {"apiGroups": ["*"], "resources": ["*"], "verbs": ["delete"]}],            # a wildcard delete nobody asked for
     ]
     for role in over:
         _, extra = compare(role, [need], rbac)
@@ -282,6 +296,14 @@ def self_test():
         raise SystemExit("the check accepted an extra's own grant while extras does not name it")
     if any(compare([crd_rule], [crd], {}, ("argocd",))):
         raise SystemExit("the check refused an extra's own grant while extras names it")
+    wild = {"switch": "rbac.deleteAll", "group": "*", "resource": "*", "verbs": ["delete"], "source": "self-test"}
+    wild_rule = {"apiGroups": ["*"], "resources": ["*"], "verbs": ["delete"]}
+    if not compare([wild_rule], [wild], {"deleteAll": False})[1]:
+        raise SystemExit("the check accepted delete on every kind while rbac.deleteAll is off")
+    if not compare([{**wild_rule, "verbs": ["delete", "patch"]}], [wild], {"deleteAll": True})[1]:
+        raise SystemExit("the check accepted another verb riding on the wildcard delete")
+    if any(compare([wild_rule], [wild], {"deleteAll": True})):
+        raise SystemExit("the check refused delete on every kind while rbac.deleteAll is on")
     try:
         switch_on("rbac.wirte", {"write": True})
     except SystemExit:
@@ -289,7 +311,8 @@ def self_test():
     else:
         raise SystemExit("the check accepted a switch that is not a value")
     print(f"ok    self-test - {len(short)} roles granting too little and {len(over)} granting too much "
-          "refused, an extra's grant held to `extras` both ways, a misspelt switch refused, the exact grant accepted")
+          "refused, an extra's grant held to `extras` both ways, the wildcard delete held to rbac.deleteAll and its one verb, "
+          "a misspelt switch refused, the exact grant accepted")
     print()
 
 
