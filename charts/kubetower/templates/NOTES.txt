@@ -36,6 +36,16 @@ extraEnv entry wins. The role still grants what the extras named in `extras`
 read, and nothing for a page only KT_EXTRAS turns on. Keep one of them: the
 `extras` value.
 {{- end }}
+{{- /* replicaCount alone: the chart renders no autoscaler, so it is the one
+     number of consoles there is. */}}
+{{- if and .Values.extras (include "kubetower.several" .) }}
+
+THE EXTRA PAGES CANNOT BE TURNED ON PER CLUSTER with {{ .Values.replicaCount }} replicas. Turning
+one on in Settings > Extra needs a single replica and its state volume: with
+several, each console's state is its own, so the console withholds the write,
+the tab is a view, and only the chart's values decide. Run replicaCount=1 with
+persistence to let people holding `use` on extras.kubetower.dev/<key> do it.
+{{- end }}
 
 1. REACH IT
 {{- /* The local port is the one single sign-on sends the browser back to, when
