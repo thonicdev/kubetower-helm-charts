@@ -68,7 +68,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: 2d87a60e2315bbb722440c94f836941be23aa9a1
+  commit: af825bea87fc5d683570a25cb35f2f970ef2adfe
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -125,7 +125,7 @@ needs:
   # The CRD list, which is how the console knows what custom resources exist and
   # which columns to render. Reading the definitions does not grant reading the
   # objects; that is rbac.customResources below.
-  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [list], extras: [argocd], source: "internal/customresources/customresources.go"}
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [get, list], extras: [argocd], source: "internal/customresources/customresources.go; internal/customresources/native.go (get)"}
 
   # Secrets, and this is the line to think about before the others.
   #

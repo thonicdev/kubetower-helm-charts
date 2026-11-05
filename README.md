@@ -439,8 +439,8 @@ and the render comes out wrong or fails.
 The `ClusterRole` is rendered from `charts/kubetower/console-needs.yaml` (see
 [RBAC](#rbac)), and an upgrade removes every grant the console never uses:
 `watch`; `update`; the `*/scale` and `*/status` subresources; `pods/attach`;
-`nodes/stats` and `nodes/metrics`; `get` on CustomResourceDefinitions and on
-`metrics.k8s.io`; `list` on `pods/log`; and every read of
+`nodes/stats` and `nodes/metrics`; `get` on `metrics.k8s.io`; `list` on
+`pods/log`; and every read of
 `controllerrevisions`, `podtemplates`, `volumeattachments`, `csidrivers`,
 `csinodes`, `csistoragecapacities` and `events.k8s.io` events.
 
@@ -456,8 +456,7 @@ the pod runs with this role too**, and these stop working there:
 - `kubectl rollout history` and `kubectl rollout undo` on StatefulSets and
   DaemonSets (`controllerrevisions`);
 - `kubectl top pod NAME` and `kubectl top node NAME` (`get` on
-  `metrics.k8s.io`); the unnamed forms list, and still work;
-- `kubectl get crd NAME`; `kubectl get crd` still lists.
+  `metrics.k8s.io`); the unnamed forms list, and still work.
 
 If that shell needs them, bind a role of your own to the release's
 ServiceAccount. The chart will not grant what the console does not ask for.
