@@ -22,7 +22,11 @@ own. Checked on the real render, each case against the property it rests on:
    KT_EXTRA_SETTINGS; named, the ConfigMap holds `<page>.<setting>=on|off` in
    key order and the Deployment references it, alone or beside KT_EXTRAS;
    extraEnv setting KT_EXTRA_SETTINGS wins; what is not page -> setting ->
-   boolean is refused, naming `extraSettings`.
+   boolean, or a key the console's own pattern would not hold, is refused,
+   naming `extraSettings` or the key.
+6. **NOTES names a page `extraSettings` sets and `extras` does not**, since
+   that page cannot be turned on; and says nothing when `extras` names it, or
+   when extraEnv sets KT_EXTRAS and so decides the pages itself.
 
 That the checksum hashes the ConfigMap rendered beside it, and that changing
 the list changes the Deployment, is test/checksum-check.py's.
@@ -53,6 +57,15 @@ def shape(*args, variable="KT_EXTRAS"):
            if e["name"] == variable]
     annotations = dep["spec"]["template"]["metadata"].get("annotations") or {}
     return maps, env, annotations.get("checksum/extras")
+
+
+def notes(*args):
+    """What NOTES prints, as `helm install` prints it."""
+    out = subprocess.run(["helm", "install", "kubetower", CHART, "--dry-run=client",
+                          "--set", "image.tag=0.0.0-check", *args], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"FAIL  helm install --dry-run=client with {args} failed: {out.stderr.strip()}")
+    return out.stdout.split("NOTES:", 1)[-1]
 
 
 def settings_failures():
@@ -99,12 +112,30 @@ def settings_failures():
                          ("extraSettings.alfa=on", "extraSettings"),
                          ("extraSettings.alfa.one=yes", "extraSettings"),
                          ("extraSettings.Alfa.one=true", "Alfa"),
-                         ("extraSettings.alfa.One=true", "One")]:
+                         ("extraSettings.alfa.One=true", "One"),
+                         ("extraSettings.a.one=true", "a"),
+                         ("extraSettings.alfa.one-=true", "one-"),
+                         (f"extraSettings.{'x' * 41}.one=true", "x" * 41)]:
         out = render("--set", value)
         if out.returncode == 0:
             failures.append(f"NOT REFUSED: --set {value}")
         elif named not in out.stderr:
             failures.append(f"--set {value} refused without naming {named}: {out.stderr.strip()}")
+
+    warning = "which extras does not"
+    for args, want in [
+        (["--set", "extraSettings.argocd.list-column=true"], True),
+        (["--set", "extras={kubecron}", "--set", "extraSettings.argocd.list-column=true"], True),
+        (["--set", "extras={argocd}", "--set", "extraSettings.argocd.list-column=true"], False),
+        (["--set", "extraSettings.argocd.list-column=true",
+          "--set", "extraEnv[0].name=KT_EXTRAS", "--set", "extraEnv[0].value=argocd"], False),
+        ([], False),
+    ]:
+        printed = notes(*args)
+        if (warning in printed) != want:
+            failures.append(f"{args}: NOTES {'does not name' if want else 'names'} a page extras leaves out")
+        elif want and "argocd" not in printed.split(warning)[0].splitlines()[-1]:
+            failures.append(f"{args}: NOTES warns without naming argocd")
     return failures
 
 
@@ -158,5 +189,5 @@ if __name__ == "__main__":
     if not failures:
         print("ok    extras and extraSettings render one ConfigMap, KT_EXTRAS and KT_EXTRA_SETTINGS "
               "reference it and its checksum is on the pod; extraEnv wins; what is not a list of keys, "
-              "or page -> setting -> boolean, is refused")
+              "or page -> setting -> boolean, is refused; NOTES names a setting's page extras leaves out")
     sys.exit(1 if failures else 0)

@@ -514,10 +514,12 @@ extras: []
 #
 # Rendered as KT_EXTRA_SETTINGS (`argocd.list-column=on`) into the same
 # ConfigMap as extras, and restarted on change the same way. Each setting named
-# has that value for every cluster the console shows, and the Settings page
-# draws it as set by the deployment. Under the server profile this is the only
-# way to change one: the console offers no control for it there. Empty, the
-# default, the variable is not rendered and every setting keeps its default.
+# is pinned: it has that value for every cluster the console shows, the
+# Settings page draws it as set by the deployment, and the console refuses a
+# per-cluster change to it. A setting left out keeps its default, and may be
+# changed per cluster where the console offers that choice. A page that extras
+# does not name cannot be turned on, so its settings here have no effect (NOTES
+# says so). Empty, the default, the variable is not rendered.
 #
 # extraEnv setting KT_EXTRA_SETTINGS as well wins (NOTES says so).
 extraSettings: {}

@@ -360,9 +360,8 @@ extra never grants a Secret, a port-forward or a proxy.
 ### Settings of the extra pages: `extraSettings`
 
 An extra page may offer settings of its own, each on or off - the Argo CD page's
-column in the console's resource lists, for one, which is off by default. Under
-the server profile the console offers no control for them, so the deployment
-sets them, by page and setting key:
+column in the console's resource lists, for one, which is off by default. The
+deployment can decide one for every cluster, by page and setting key:
 
 ```yaml
 extraSettings:
@@ -372,17 +371,27 @@ extraSettings:
 
 or `--set extraSettings.argocd.list-column=true`. Which settings exist depends
 on the console's build: its Settings page lists each page's settings, and its
-start-up log names a setting it does not know and ignores it. The chart writes
-them into the same ConfigMap as `extras`, as `KT_EXTRA_SETTINGS`
-(`argocd.list-column=on`), and the Deployment reads that key by reference;
-changing a setting restarts the pod, as changing the list does. Empty, the
-default, the variable is not rendered and every setting keeps its default.
+start-up log names a setting it does not know and ignores it. A console built
+before it read `KT_EXTRA_SETTINGS` ignores the whole variable without a word:
+if the Settings page does not draw the setting as set by the deployment, the
+image is older than the value. The chart writes the settings into the same
+ConfigMap as `extras`, as `KT_EXTRA_SETTINGS` (`argocd.list-column=on`), and
+the Deployment reads that key by reference; changing a setting restarts the
+pod, as changing the list does. Empty, the default, the variable is not
+rendered and every setting keeps its default.
 
-Each setting named has that value for every cluster the console shows, and the
-Settings page draws it as set by the deployment. The value is a map of page to
-setting to `true` or `false`; a string, a number or an upper-case key is
-refused before anything renders. If `extraEnv` sets `KT_EXTRA_SETTINGS` as
-well, the `extraEnv` entry wins and NOTES says so.
+A setting named here is **pinned**: it has that value on every cluster the
+console shows, the Settings page draws it as set by the deployment, with no
+control, and the console refuses a per-cluster change to it. A setting left out
+keeps its default, and a person allowed to turn its page on in a cluster may
+change it there, where the console offers that choice. A setting of a page
+`extras` does not name has no effect, since that page cannot be turned on;
+NOTES says so.
+
+The value is a map of page to setting to `true` or `false`; a string, a number
+or a key the console could not hold (upper case, a dot, longer than 40
+characters) is refused before anything renders. If `extraEnv` sets
+`KT_EXTRA_SETTINGS` as well, the `extraEnv` entry wins and NOTES says so.
 
 ### When the audit log stops writing
 
