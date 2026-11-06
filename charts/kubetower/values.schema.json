@@ -38,6 +38,15 @@
         "additionalProperties": { "type": "boolean" }
       }
     },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "deleteAll": {
+          "$comment": "A boolean, because it grants delete on every kind: `--set-string rbac.deleteAll=yes` or a quoted value in a values file is refused here, naming the value, rather than read by its spelling.",
+          "type": "boolean"
+        }
+      }
+    },
     "valkey": {
       "type": "object",
       "properties": {
