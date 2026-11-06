@@ -531,31 +531,49 @@ jobs:
       # and **where it is not, the step fails**. It used to warn NOT RUN and
       # pass, and a check that passes without having compared anything is
       # read as green by everybody who does not open the log: the list went
-      # unchecked for every change to the console's extras that way. Until
-      # this workflow can read the console (the repository public, or a
-      # read-only credential given to this job), this step is red and says
-      # why; run it locally instead, with a checkout of the console beside
-      # this one at the commit the list names:
+      # unchecked for every change to the console's extras that way.
+      #
+      # The console is private, and the organisation has deploy keys turned
+      # off, so it is read with KUBETOWER_READ_TOKEN: a fine-grained token
+      # holding Contents: read on thonicdev/kubetower and nothing else, kept
+      # as a secret of this repository. It reaches git as an http.extraheader
+      # on the command line (`git -c`), never in a URL, a file or the
+      # checkout's config, and the header value is masked as well as the
+      # secret. A run with no token - a pull request from a fork, which gets
+      # no secrets, or the secret not created yet - fails and says so: the
+      # comparison did not happen, and a skip would read as green. Locally,
+      # with a checkout of the console beside this one at the commit the list
+      # names:
       #   python test/derive-needs.py --self-test --core ../kubetower
       - name: the list is what the console's source asks for
         env:
           GIT_TERMINAL_PROMPT: "0"
+          KUBETOWER_READ_TOKEN: ${{ secrets.KUBETOWER_READ_TOKEN }}
         run: |
           set -o pipefail
+          if [ -z "$KUBETOWER_READ_TOKEN" ]; then
+            echo "::error::KUBETOWER_READ_TOKEN is not available to this run, so console-needs.yaml cannot be compared with the console's private source. A pull request from a fork gets no secrets: a member re-runs the check on a branch of this repository. Otherwise the repository secret is missing: create it (fine-grained token, Contents: read on thonicdev/kubetower). This is a failure, not a skip."
+            echo "**Derivation FAILED - not run**: KUBETOWER_READ_TOKEN is not available to this run (a fork's pull request, or the secret is missing)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          auth=$(printf 'x-access-token:%s' "$KUBETOWER_READ_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          # Scoped to github.com, so the header goes nowhere else.
+          hdr=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth")
           read -r url commit < <(python -c '
           import yaml
           d = yaml.safe_load(open("charts/kubetower/console-needs.yaml"))["derivedFrom"]
           print(d["repository"], d["commit"])' | tr -d '\r')
           [ -n "$url" ] && [ -n "$commit" ] || { echo "console-needs.yaml names no derivedFrom repository and commit"; exit 1; }
           # Bounded: an unreadable repository must answer, not hang the job.
-          if ! timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1; then
+          if ! timeout 60 git "${hdr[@]}" ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1; then
             sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
-            echo "::error::$url is not readable from this workflow, so console-needs.yaml was not compared with the console's source at $commit. This is a failure, not a skip: run test/derive-needs.py --self-test --core <checkout at $commit> locally, and say what it printed on the pull request"
+            echo "::error::$url is not readable with KUBETOWER_READ_TOKEN (expired, revoked, or not granted Contents: read on it), so console-needs.yaml was not compared with the console's source at $commit. This is a failure, not a skip: run test/derive-needs.py --self-test --core <checkout at $commit> locally, and say what it printed on the pull request"
             echo "**Derivation FAILED - not run**: $url is not readable from this workflow; console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           git init -q "$RUNNER_TEMP/core"
-          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
+          timeout 300 git "${hdr[@]}" -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
           git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
           python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
 
