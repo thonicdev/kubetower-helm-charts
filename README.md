@@ -357,6 +357,42 @@ extra never grants a Secret, a port-forward or a proxy.
 | `kubecron` | nothing of its own: CronJobs, Jobs, Pods and Services are `rbac.read`'s | `rbac.exec` for the tunnel to its collector; `rbac.readSecrets` when the collector asks for a token |
 | `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
 
+### Settings of the extra pages: `extraSettings`
+
+An extra page may offer settings of its own, each on or off - the Argo CD page's
+column in the console's resource lists, for one, which is off by default. The
+deployment can decide one for every cluster, by page and setting key:
+
+```yaml
+extraSettings:
+  argocd:
+    list-column: true
+```
+
+or `--set extraSettings.argocd.list-column=true`. Which settings exist depends
+on the console's build: its Settings page lists each page's settings, and its
+start-up log names a setting it does not know and ignores it. A console built
+before it read `KT_EXTRA_SETTINGS` ignores the whole variable without a word:
+if the Settings page does not draw the setting as set by the deployment, the
+image is older than the value. The chart writes the settings into the same
+ConfigMap as `extras`, as `KT_EXTRA_SETTINGS` (`argocd.list-column=on`), and
+the Deployment reads that key by reference; changing a setting restarts the
+pod, as changing the list does. Empty, the default, the variable is not
+rendered and every setting keeps its default.
+
+A setting named here is **pinned**: it has that value on every cluster the
+console shows, the Settings page draws it as set by the deployment, with no
+control, and the console refuses a per-cluster change to it. A setting left out
+keeps its default, and a person allowed to turn its page on in a cluster may
+change it there, where the console offers that choice. A setting of a page
+`extras` does not name has no effect, since that page cannot be turned on;
+NOTES says so.
+
+The value is a map of page to setting to `true` or `false`; a string, a number
+or a key the console could not hold (upper case, a dot, longer than 40
+characters) is refused before anything renders. If `extraEnv` sets
+`KT_EXTRA_SETTINGS` as well, the `extraEnv` entry wins and NOTES says so.
+
 ### When the audit log stops writing
 
 The console records every act it performs in its audit log, on its standard
@@ -466,8 +502,9 @@ ServiceAccount. The chart will not grant what the console does not ask for.
 ServiceAccount, ClusterRole + ClusterRoleBinding, Secret (session key, and the
 password hash if you set one), PersistentVolumeClaim (the state directory),
 Deployment, Service. A ConfigMap holding a kubeconfig only for the desktop
-profile (`serverProfile: false`), and one holding `KT_EXTRAS` only when
-`extras` names an extra page. Ingress only if you ask, and it is off
+profile (`serverProfile: false`), and one holding `KT_EXTRAS` and
+`KT_EXTRA_SETTINGS` only when `extras` names an extra page or `extraSettings` a
+setting. Ingress only if you ask, and it is off
 because an Ingress in front of this publishes cluster credentials behind one
 shared password. NetworkPolicies only if you ask (`networkPolicy.enabled`).
 
