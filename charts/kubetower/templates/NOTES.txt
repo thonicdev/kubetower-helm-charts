@@ -31,8 +31,10 @@ and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
 
 {{- if and (include "kubetower.extrasInExtraEnv" .) .Values.extras }}
 
-extras is IGNORED: extraEnv sets KT_EXTRAS as well, and the extraEnv entry
-wins. Remove one of them.
+extras is IGNORED for the pages: extraEnv sets KT_EXTRAS as well, and the
+extraEnv entry wins. The role still grants what the extras named in `extras`
+read, and nothing for a page only KT_EXTRAS turns on. Keep one of them: the
+`extras` value.
 {{- end }}
 
 1. REACH IT
@@ -156,6 +158,7 @@ wins. Remove one of them.
    CPU/memory columns ........ {{ if .Values.rbac.metrics }}where metrics-server is installed{{ else }}NO - rbac.metrics is false{{ end }}
    Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone who signs in{{ else }}no - rbac.write is false{{ end }}
    Cordon, drain, evict ...... {{ if .Values.rbac.write }}YES - under rbac.write{{ else }}no - rbac.write is false{{ end }}
+   Deleting any kind ......... {{ if .Values.rbac.deleteAll }}YES - delete on every kind: treat it as cluster-admin for deletion{{ else }}no - rbac.deleteAll is false{{ end }}
    Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone who signs in{{ else }}no - rbac.exec is false{{ end }}
    Prometheus graphs ......... {{ if .Values.rbac.prometheusProxy }}through the service proxy - which reaches every Service's HTTP GETs{{ else if .Values.rbac.exec }}through a port-forward to the Prometheus pod (rbac.prometheusProxy is false){{ else }}NO - rbac.prometheusProxy and rbac.exec are both false{{ end }}
    Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
@@ -240,6 +243,13 @@ wins. Remove one of them.
    any ServiceAccount in its namespace - so anybody who signs in can act with
    the rights of any ServiceAccount in the cluster. On most clusters that
    reaches cluster-admin.
+{{- end }}
+{{- if .Values.rbac.deleteAll }}
+
+   rbac.deleteAll is ON in this release. Anybody who signs in may delete
+   anything in the cluster - every Namespace with what it holds, every CRD
+   with its objects, the RBAC itself, this release - up to their own
+   RoleBindings with single sign-on, and all of it with the shared password.
 {{- end }}
 {{- if .Values.rbac.nodeProxy }}
 
