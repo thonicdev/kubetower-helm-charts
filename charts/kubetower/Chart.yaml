@@ -14,10 +14,11 @@ version: 0.3.0
 
 # The console's version, and the default image tag: the console's release
 # workflow publishes ghcr.io/thonicdev/kubetower:<version> for each tag
-# v<version>. No tag has been cut yet, so this is a placeholder that names no
-# image, and the chart refuses to render it (templates/image-refused.yaml) -
-# set image.tag to a published version. Set this to that version in the same
-# change that cuts the tag, and the refusal goes away by itself.
+# <version>, bare semver with no leading v (`0.1.0-rc.1`). Until a chart
+# release names one, this is a placeholder that names no image, and the chart
+# refuses to render it (templates/image-refused.yaml) - set image.tag to a
+# published version. Set this to that version in the change that releases the
+# chart against it, and the refusal goes away by itself.
 appVersion: "0.0.0-dev"
 
 kubeVersion: ">=1.25.0-0"

@@ -25,10 +25,12 @@
 #     nothing by default. --allow-placeholder lifts this for CI's dry run only;
 #   - a role derived from another console than the one it installs. The role
 #     grants exactly what console-needs.yaml lists, and the list was read from
-#     the console at `derivedFrom.commit`. The console's tag v<appVersion> must
-#     be that commit, read from the console's repository - so a console that
-#     asks for something new cannot ship with a chart whose role refuses it.
-#     A readable repository with no tag v<appVersion> is refused as well;
+#     the console at `derivedFrom.commit`. The console's tag <appVersion>,
+#     bare semver with no leading `v` (`0.1.0-rc.1`), must be that commit,
+#     read from the console's repository - so a console that asks for
+#     something new cannot ship with a chart whose role refuses it. A readable
+#     repository with no tag <appVersion> is refused as well; a tag with a
+#     leading `v` is not that tag;
 #   - a console repository that cannot be read for any reason other than a
 #     missing credential: a name that does not resolve, a server error, a
 #     rate limit, a timeout. Each of those is a release that could have been
@@ -118,32 +120,32 @@ else
   [ -n "$derived" ] || { echo "REFUSED: $chart/console-needs.yaml names no derivedFrom commit" >&2; exit 1; }
   # LC_ALL=C keeps git's answer in one language. The line matched below is
   # not translated by git today; this keeps it so.
-  if ! refs=$(LC_ALL=C GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/v$app" "refs/tags/v$app^{}" 2>&1); then
+  if ! refs=$(LC_ALL=C GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote "$console" "refs/tags/$app" "refs/tags/$app^{}" 2>&1); then
     # Only the missing-credential answer is let through. Anything else - DNS,
     # a 5xx, a rate limit, the 60 s timeout (exit 124, often with no output) -
     # is a check that could have run, so it refuses rather than publishing a
     # version that can never be taken back.
     if ! printf '%s\n' "$refs" | grep -qE 'could not read (Username|Password)'; then
-      echo "REFUSED: the console's tag v$app could not be read from $console, and the answer was not the missing-credential one, so this release could have been checked and was not. Run it again once the console's repository answers. git said:" >&2
+      echo "REFUSED: the console's tag $app could not be read from $console, and the answer was not the missing-credential one, so this release could have been checked and was not. Run it again once the console's repository answers. git said:" >&2
       printf '%s\n' "${refs:-(nothing; the read was stopped after 60 s)}" | sed 's/^/    /' >&2
       exit 1
     fi
     # Unreadable is not the answer "no such tag" or "another commit": nothing
     # was compared, so the run says so and records the commit it was given.
-    tie="the role is NOT tied to the console: its tag v$app could not be read from $console, so nothing shows that tag is $derived, the commit console-needs.yaml was derived from"
+    tie="the role is NOT tied to the console: its tag $app could not be read from $console, so nothing shows that tag is $derived, the commit console-needs.yaml was derived from"
     echo "WARNING: $tie. Publishing anyway, with derivedFrom.commit $derived as committed. The console's repository answered:" >&2
     printf '%s\n' "$refs" | sed 's/^/    /' >&2
     [ "${GITHUB_ACTIONS:-}" != true ] || echo "::warning title=Role not tied to the console's tag::$tie" >&2
   else
     # An annotated tag's own object, then the commit it points at (^{}): the commit wins.
-    tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app^{}" '$2 == p {print $1}')
-    [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/v$app" '$2 == p {print $1}')
-    [ -n "$tagged" ] || { echo "REFUSED: the console has no tag v$app at $console - appVersion must name a released console" >&2; exit 1; }
+    tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/$app^{}" '$2 == p {print $1}')
+    [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk -v p="refs/tags/$app" '$2 == p {print $1}')
+    [ -n "$tagged" ] || { echo "REFUSED: the console has no tag $app at $console - appVersion must name a released console" >&2; exit 1; }
     if [ "$tagged" != "$derived" ]; then
-      echo "REFUSED: the console's v$app is $tagged, and console-needs.yaml was derived from $derived. Re-run test/derive-needs.py at $tagged, move derivedFrom to it, then tag again" >&2
+      echo "REFUSED: the console's tag $app is $tagged, and console-needs.yaml was derived from $derived. Re-run test/derive-needs.py at $tagged, move derivedFrom to it, then tag again" >&2
       exit 1
     fi
-    tie="the role is tied to the console: its v$app is $derived, the commit console-needs.yaml was derived from"
+    tie="the role is tied to the console: its tag $app is $derived, the commit console-needs.yaml was derived from"
   fi
 fi
 

@@ -139,7 +139,8 @@ Valkey that survives its own restart.
 ## The image
 
 The default is `ghcr.io/thonicdev/kubetower`, which is where the console's
-release workflow pushes one image per tag `v<version>`, tagged `<version>`.
+release workflow pushes one image per tag `<version>` (bare semver, such as
+`0.1.0-rc.1`), tagged the same.
 There is no `latest`. The tag defaults to the chart's `appVersion`, and while
 that is the `0.0.0-dev` placeholder **the chart refuses to render without
 `image.tag`**, rather than install an image no registry holds and leave the pod
@@ -391,9 +392,9 @@ A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
 - an `appVersion` that is not a semantic version (`MAJOR.MINOR.PATCH`,
   optionally `-prerelease`): it is the published chart's default image tag;
 - a role read from another console than the one the chart installs: the
-  console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
-  derived from, read from the console's repository, and a readable repository
-  with no such tag is refused too;
+  console's tag `<appVersion>` (bare semver, no leading `v`) must be the
+  commit `console-needs.yaml` was derived from, read from the console's
+  repository, and a readable repository with no such tag is refused too;
 - a console repository that cannot be read for any reason other than a
   missing credential - a name that does not resolve, a server error, a rate
   limit, a timeout. Each is a release that could have been checked, and a
@@ -409,7 +410,7 @@ cannot be checked. A 403, or a credential offered and rejected, is refused. The 
 run's summary naming `derivedFrom.commit` as committed - and publishes. It
 never reports that case as checked. Until the console is public, whoever pushes
 the chart tag makes that check by hand: `derivedFrom.commit` must be the commit
-the console's `v<appVersion>` tag names. Once it is public, the tag is readable
+the console's `<appVersion>` tag names. Once it is public, the tag is readable
 and the equality is enforced again with no change here. One limit: without a
 credential, GitHub gives the same answer for a repository that does not
 exist, so a typo in the console's URL would also only warn. That URL is a

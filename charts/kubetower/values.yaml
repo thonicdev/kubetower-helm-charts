@@ -34,7 +34,8 @@
 
 image:
   # What the console's release workflow publishes: one image per tag
-  # v<version>, at ghcr.io/thonicdev/kubetower:<version>, built from the
+  # <version> (bare semver, `0.1.0-rc.1`), at
+  # ghcr.io/thonicdev/kubetower:<version>, built from the
   # repository's Dockerfile and stamped with that version. There is no
   # `latest`.
   #

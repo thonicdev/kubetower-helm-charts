@@ -583,8 +583,9 @@ jobs:
       # pushed: a tag that is not the chart's version; while appVersion is the
       # placeholder, any tag at all; on a pull request, a commit that is not on
       # main; and a role derived from another console commit than the
-      # console's tag v<appVersion>, or a readable console repository with no
-      # such tag, or one that cannot be read for any reason but a missing
+      # console's tag <appVersion> (bare semver, no leading v), or a readable
+      # console repository with no such tag - one tagged only with the old
+      # v-prefixed name included - or one that cannot be read for any reason but a missing
       # credential, or an appVersion that is not a semantic version. The cases
       # about the console run on a copy of the chart with a real-looking
       # appVersion, against console repositories and a server made here, so
@@ -618,13 +619,24 @@ jobs:
           sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
           git init -q "$copy/console"
           git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
-          git -C "$copy/console" tag v9.9.9
+          git -C "$copy/console" tag 9.9.9
           git init -q "$copy/untagged"
           git -C "$copy/untagged" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "no release"
+          git init -q "$copy/prefixed"
+          git -C "$copy/prefixed" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "the old tag name"
+          git -C "$copy/prefixed" tag v9.9.9
+          head=$(git -C "$copy/prefixed" rev-parse HEAD)
+          sed "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml" > "$copy/prefixed-needs.yaml"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
             refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/untagged \
-            refused "the console has no tag v9.9.9" "kubetower-$version" "$local" --plain-http
+            refused "the console has no tag 9.9.9" "kubetower-$version" "$local" --plain-http
+          # A console whose only tag is v9.9.9, on the very commit the role was
+          # derived from, still has no tag 9.9.9: the old name does not count.
+          cp -r "$copy/chart" "$copy/chart-prefixed"
+          cp "$copy/prefixed-needs.yaml" "$copy/chart-prefixed/console-needs.yaml"
+          CHART_DIR=$copy/chart-prefixed CONSOLE_REPO=$copy/prefixed \
+            refused "the console has no tag 9.9.9" "kubetower-$version" "$local" --plain-http
           # A console repository that cannot be read for any reason but a
           # missing credential is refused: a missing repository, a server
           # error and a 403 (test/git-http-fixture.py answers 403 under
@@ -685,18 +697,18 @@ jobs:
             printf '%s\n' "$out" | grep -qF -- "$want" || { echo "published without saying: $want"; exit 1; }
           }
           CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8766/auth/console \
-            publishes "the role is NOT tied to the console: its tag v9.9.9 could not be read" \
+            publishes "the role is NOT tied to the console: its tag 9.9.9 could not be read" \
             "kubetower-$version" oci://localhost:5000/unreadable --plain-http
           printf '%s\n' "$out" | grep -q 'could not read Username' || { echo "the warning path was not the missing-credential answer"; exit 1; }
           printf '%s\n' "$out" | grep -q '^::warning title=Role not tied' || { echo "no annotation for the unreadable tag"; exit 1; }
           printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
           git init -q "$copy/console"
           git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
-          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid tag -a v9.9.9 -m v9.9.9
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid tag -a 9.9.9 -m 9.9.9
           head=$(git -C "$copy/console" rev-parse HEAD)
           sed -i "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml"
           CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
-            publishes "the role is tied to the console: its v9.9.9 is $head" \
+            publishes "the role is tied to the console: its tag 9.9.9 is $head" \
             "kubetower-$version" oci://localhost:5000/tied --plain-http
           printf '%s\n' "$out" | grep -q '::warning' && { echo "a matching tag raised a warning"; exit 1; }
           echo "no credential: warned and published; matching annotated tag: published as tied"
