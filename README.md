@@ -354,7 +354,7 @@ extra never grants a Secret, a port-forward or a proxy.
 | Extra | Granted when `extras` names it | Also needs |
 |---|---|---|
 | `argocd` | `list` Argo CD Applications, ApplicationSets, AppProjects; Flux Kustomizations, HelmReleases | `rbac.customResources` for its tab on a custom resource's page; `rbac.readSecrets` and `rbac.exec` for Argo CD's own diff (a token Secret, and a tunnel to argocd-server) |
-| `kubeadjust` | `list` VerticalPodAutoscalers | `rbac.metrics` for live usage; `rbac.prometheusProxy` or `rbac.exec` for the six-hour window; `rbac.nodeProxy` for disk usage |
+| `kubeadjust` | `list` VerticalPodAutoscalers, ControllerRevisions | `rbac.metrics` for live usage; `rbac.prometheusProxy` or `rbac.exec` for the six-hour window; `rbac.nodeProxy` for disk usage |
 | `kubecron` | nothing of its own: CronJobs, Jobs, Pods and Services are `rbac.read`'s | `rbac.exec` for the tunnel to its collector; `rbac.readSecrets` when the collector asks for a token |
 | `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
 
