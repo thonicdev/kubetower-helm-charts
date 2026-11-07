@@ -146,6 +146,37 @@ jobs:
           printf '%s\n' "$out" | grep -q 'auth.trustedProxies' || { echo "refused without naming the value: $out"; exit 1; }
           echo "a boolean auth.trustedProxies is refused, naming it"
 
+      # app.kubernetes.io/version names the image the pod runs: image.tag when
+      # it is set, else appVersion. Argo CD, `kubectl get -L` and inventories
+      # read the label, so a pinned tag labelled with the placeholder appVersion
+      # says something untrue on every object. A copy of the chart with a real
+      # appVersion renders the unset case, which the placeholder refuses.
+      - name: The version label is the tag deployed, or appVersion when no tag is set
+        run: |
+          set -o pipefail
+          chart=$RUNNER_TEMP/version-label
+          cp -r charts/kubetower "$chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$chart/Chart.yaml"
+          check() {
+            want="$1"; shift
+            helm template kubetower "$chart" --set ingress.enabled=true --set replicaCount=2 --set persistence.enabled=false \
+                --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+                --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback "$@" \
+              | WANT="$want" python -c '
+          import os, sys, yaml
+          want = os.environ["WANT"]
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          got = {d["kind"] + "/" + d["metadata"]["name"]: (d["metadata"].get("labels") or {}).get("app.kubernetes.io/version") for d in docs}
+          wrong = {k: v for k, v in got.items() if v != want}
+          image = [c["image"] for d in docs if d["kind"] == "Deployment" for c in d["spec"]["template"]["spec"]["containers"]]
+          if wrong or len(got) < 5 or not image[0].endswith(":" + want):
+              sys.exit(f"want {want} on every object and in the image, got {wrong or got}, image {image}")
+          print(f"{len(got)} objects labelled {want}, image {image[0]}")'
+            echo "with '${*:-no image.tag}': ok"
+          }
+          check 9.9.9
+          check 0.1.0-rc.1 --set image.tag=0.1.0-rc.1
+
       # `helm lint` does not parse what it renders; it can pass on a template
       # that produces invalid YAML. This is the parse.
       - name: The rendered manifests are valid YAML

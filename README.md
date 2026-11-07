@@ -260,6 +260,27 @@ helm install kubetower ./charts/kubetower \
   -f kubetower-values.yaml --set image.tag=<console version>
 ```
 
+### Behind an ingress: long-lived connections
+
+The terminal, the log stream and port-forwards are WebSocket connections that
+can sit idle for minutes. An ingress controller that closes a connection idle
+for its read timeout cuts them: a shell that dies every minute.
+
+With `ingress.enabled`, the chart raises that timeout to an hour with two
+annotations, `nginx.ingress.kubernetes.io/proxy-read-timeout` and
+`proxy-send-timeout`. **They are ingress-nginx's alone.** Any other controller
+ignores them without a word, so on another controller the timeout is yours to
+raise, the way that controller sets it; `ingress.annotations` adds whatever
+annotations it reads.
+
+**On Traefik no Ingress annotation sets it.** What matters is the entry
+point's `transport.respondingTimeouts.readTimeout`, 60 s by default in Traefik
+v3, which is part of Traefik's own configuration, not of an Ingress, so this
+chart cannot set it. Raise it on Traefik, for the entry point the console is
+served on - for example
+`--entryPoints.websecure.transport.respondingTimeouts.readTimeout=3600s`. It
+applies to everything served on that entry point, not only the console.
+
 ### Password sign-in behind an ingress: `auth.trustedProxies`
 
 Only when password sign-in is on - no `auth.oidc.issuer`, or
