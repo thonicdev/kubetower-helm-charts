@@ -24,7 +24,11 @@ metadata:
     # all long-lived WebSocket connections. An ingress controller's default
     # read timeout - 60s on ingress-nginx - closes an idle shell, so it is
     # raised here rather than left to be discovered from a terminal that dies
-    # every minute.
+    # every minute. These two annotations are ingress-nginx's alone: every
+    # other controller ignores them, silently. On Traefik the timeout is not
+    # an Ingress annotation at all but its entry point's
+    # transport.respondingTimeouts.readTimeout, set on Traefik itself, which
+    # this chart cannot do; the README's "Behind an ingress" section says so.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     {{- with .Values.ingress.annotations }}

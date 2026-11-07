@@ -139,7 +139,8 @@ Valkey that survives its own restart.
 ## The image
 
 The default is `ghcr.io/thonicdev/kubetower`, which is where the console's
-release workflow pushes one image per tag `v<version>`, tagged `<version>`.
+release workflow pushes one image per tag `<version>` (bare semver, such as
+`0.1.0-rc.1`), tagged the same.
 There is no `latest`. The tag defaults to the chart's `appVersion`, and while
 that is the `0.0.0-dev` placeholder **the chart refuses to render without
 `image.tag`**, rather than install an image no registry holds and leave the pod
@@ -259,6 +260,27 @@ helm install kubetower ./charts/kubetower \
   -f kubetower-values.yaml --set image.tag=<console version>
 ```
 
+### Behind an ingress: long-lived connections
+
+The terminal, the log stream and port-forwards are WebSocket connections that
+can sit idle for minutes. An ingress controller that closes a connection idle
+for its read timeout cuts them: a shell that dies every minute.
+
+With `ingress.enabled`, the chart raises that timeout to an hour with two
+annotations, `nginx.ingress.kubernetes.io/proxy-read-timeout` and
+`proxy-send-timeout`. **They are ingress-nginx's alone.** Any other controller
+ignores them without a word, so on another controller the timeout is yours to
+raise, the way that controller sets it; `ingress.annotations` adds whatever
+annotations it reads.
+
+**On Traefik no Ingress annotation sets it.** What matters is the entry
+point's `transport.respondingTimeouts.readTimeout`, 60 s by default in Traefik
+v3, which is part of Traefik's own configuration, not of an Ingress, so this
+chart cannot set it. Raise it on Traefik, for the entry point the console is
+served on - for example
+`--entryPoints.websecure.transport.respondingTimeouts.readTimeout=3600s`. It
+applies to everything served on that entry point, not only the console.
+
 ### Password sign-in behind an ingress: `auth.trustedProxies`
 
 Only when password sign-in is on - no `auth.oidc.issuer`, or
@@ -353,7 +375,7 @@ extra never grants a Secret, a port-forward or a proxy.
 | Extra | Granted when `extras` names it | Also needs |
 |---|---|---|
 | `argocd` | `list` Argo CD Applications, ApplicationSets, AppProjects; Flux Kustomizations, HelmReleases | `rbac.customResources` for its tab on a custom resource's page; `rbac.readSecrets` and `rbac.exec` for Argo CD's own diff (a token Secret, and a tunnel to argocd-server) |
-| `kubeadjust` | `list` VerticalPodAutoscalers | `rbac.metrics` for live usage; `rbac.prometheusProxy` or `rbac.exec` for the six-hour window; `rbac.nodeProxy` for disk usage |
+| `kubeadjust` | `list` VerticalPodAutoscalers, ControllerRevisions | `rbac.metrics` for live usage; `rbac.prometheusProxy` or `rbac.exec` for the six-hour window; `rbac.nodeProxy` for disk usage |
 | `kubecron` | nothing of its own: CronJobs, Jobs, Pods and Services are `rbac.read`'s | `rbac.exec` for the tunnel to its collector; `rbac.readSecrets` when the collector asks for a token |
 | `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
 
@@ -391,9 +413,9 @@ A tag `kubetower-<version>` runs `.github/workflows/release.yml`, which runs
 - an `appVersion` that is not a semantic version (`MAJOR.MINOR.PATCH`,
   optionally `-prerelease`): it is the published chart's default image tag;
 - a role read from another console than the one the chart installs: the
-  console's tag `v<appVersion>` must be the commit `console-needs.yaml` was
-  derived from, read from the console's repository, and a readable repository
-  with no such tag is refused too;
+  console's tag `<appVersion>` (bare semver, no leading `v`) must be the
+  commit `console-needs.yaml` was derived from, read from the console's
+  repository, and a readable repository with no such tag is refused too;
 - a console repository that cannot be read for any reason other than a
   missing credential - a name that does not resolve, a server error, a rate
   limit, a timeout. Each is a release that could have been checked, and a
@@ -409,7 +431,7 @@ cannot be checked. A 403, or a credential offered and rejected, is refused. The 
 run's summary naming `derivedFrom.commit` as committed - and publishes. It
 never reports that case as checked. Until the console is public, whoever pushes
 the chart tag makes that check by hand: `derivedFrom.commit` must be the commit
-the console's `v<appVersion>` tag names. Once it is public, the tag is readable
+the console's `<appVersion>` tag names. Once it is public, the tag is readable
 and the equality is enforced again with no change here. One limit: without a
 credential, GitHub gives the same answer for a repository that does not
 exist, so a typo in the console's URL would also only warn. That URL is a

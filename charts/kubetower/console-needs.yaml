@@ -68,7 +68,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: af825bea87fc5d683570a25cb35f2f970ef2adfe
+  commit: 9bb10985e6951d4b337b2f5a127ddbb1d5f1d113
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -251,5 +251,8 @@ needs:
   - {switch: extras.argocd, group: helm.toolkit.fluxcd.io, resource: helmreleases, verbs: [list], source: "extras/argocd/flux.go"}
   # kubeadjust: the VerticalPodAutoscalers, so a workload one already sizes is
   # not argued with. A cluster without the VPA answers "not found", which the
-  # page reads as none.
+  # page reads as none. And the ControllerRevisions, where a StatefulSet and a
+  # DaemonSet keep their past templates, so a workload's usage is followed
+  # across its rollouts.
   - {switch: extras.kubeadjust, group: autoscaling.k8s.io, resource: verticalpodautoscalers, verbs: [list], source: "extras/kubeadjust/kubeadjust.go"}
+  - {switch: extras.kubeadjust, group: apps, resource: controllerrevisions, verbs: [list], source: "extras/kubeadjust/kubeadjust.go"}

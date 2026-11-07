@@ -172,6 +172,10 @@ DYNAMIC_HELPER = {
     # The create affordance: edit.Create's own question, asked to say whether
     # the page offers "+"; the create is internal/edit's, read as a write there.
     ("internal/web/apicreate.go", 'where, edit.Target{Namespace: namespace}, "create", ""'): "the create affordance, read as a write in internal/edit",
+    # The edit affordance: the `patch` the write door reviews a manifest or
+    # data save with, asked to say whether the drawer offers editing; the
+    # patch is internal/edit's, read as a write there.
+    ("internal/web/access.go", 'where, target, "patch", ""'): "the edit affordance, read as a write in internal/edit",
 }
 
 # The Kubernetes project's own kinds that have no list page of their own and

@@ -12,5 +12,5 @@ A tag you set yourself is never refused: a locally built image, loaded into
 the nodes, is a legitimate install.
 */}}
 {{- if and (not .Values.image.tag) (eq (toString .Chart.AppVersion) "0.0.0-dev") }}
-{{- fail (printf "image.tag is empty and the chart's appVersion is the placeholder 0.0.0-dev, so the image would be %s:0.0.0-dev, which no registry holds. Set image.tag to a published version - the console's release workflow pushes %s:<version> for each tag v<version> - or to an image you built and made reachable from the nodes (then set image.repository too)." .Values.image.repository .Values.image.repository) }}
+{{- fail (printf "image.tag is empty and the chart's appVersion is the placeholder 0.0.0-dev, so the image would be %s:0.0.0-dev, which no registry holds. Set image.tag to a published version - the console's release workflow pushes %s:<version> for each tag <version> - or to an image you built and made reachable from the nodes (then set image.repository too)." .Values.image.repository .Values.image.repository) }}
 {{- end }}
