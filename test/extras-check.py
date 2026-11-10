@@ -2,7 +2,7 @@
 
     python test/extras-check.py
 
-`extras` names the extra pages the console turns on. The chart renders it into
+`extras` names the extra pages the console may turn on. The chart renders it into
 a ConfigMap, and the Deployment reads KT_EXTRAS from that ConfigMap by
 reference (`valueFrom.configMapKeyRef`), so the console needs no reader of its
 own. Checked on the real render, each case against the property it rests on:
@@ -27,6 +27,12 @@ own. Checked on the real render, each case against the property it rests on:
 6. **NOTES names a page `extraSettings` sets and `extras` does not**, since
    that page cannot be turned on; and says nothing when `extras` names it, or
    when extraEnv sets KT_EXTRAS and so decides the pages itself.
+7. **NOTES warns about several replicas when, and only when, `extras` names a
+   page.** Turning an extra on per cluster needs one console and its state
+   volume; with more the console withholds the write. NOTES is read as
+   `helm install --dry-run=client` prints it, with `extras` set or empty and
+   one replica or two, so a warning printed always and one printed never both
+   fail.
 
 That the checksum hashes the ConfigMap rendered beside it, and that changing
 the list changes the Deployment, is test/checksum-check.py's.
@@ -59,13 +65,22 @@ def shape(*args, variable="KT_EXTRAS"):
     return maps, env, annotations.get("checksum/extras")
 
 
+# NOTES' heading for the warning, and the values several replicas need to render
+# at all (no persistence, a password hash rather than a drawn password).
+WARNING = "THE EXTRA PAGES CANNOT BE TURNED ON PER CLUSTER"
+SEVERAL = ["--set", "replicaCount=2", "--set", "persistence.enabled=false",
+           "--set-string=auth.passwordHash=$2a$12$abcdefghijklmnopqrstuuPd4n0ZQ8ipT1ubx0rZBf0W4NGXnGFHK"]
+
+
 def notes(*args):
-    """What NOTES prints, as `helm install` prints it."""
-    out = subprocess.run(["helm", "install", "kubetower", CHART, "--dry-run=client",
-                          "--set", "image.tag=0.0.0-check", *args], capture_output=True, text=True)
+    cmd = ["helm", "install", "kubetower", CHART, "--namespace", "kubetower", "--dry-run=client",
+           "--set", "image.tag=0.0.0-check", *args]
+    out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"FAIL  helm install --dry-run=client with {args} failed: {out.stderr.strip()}")
-    return out.stdout.split("NOTES:", 1)[-1]
+    if "NOTES:" not in out.stdout:
+        raise SystemExit(f"FAIL  helm install --dry-run=client with {args} printed no NOTES")
+    return out.stdout.split("NOTES:", 1)[1]
 
 
 def settings_failures():
@@ -142,6 +157,15 @@ def settings_failures():
 def check():
     failures = []
 
+    for args, want in [
+        (["--set", "extras={alfa}", *SEVERAL], True),
+        ([*SEVERAL], False),
+        (["--set", "extras={alfa}"], False),
+        ([], False),
+    ]:
+        if (WARNING in notes(*args)) != want:
+            failures.append(f"{args}: NOTES {'lacks' if want else 'prints'} the several-replicas warning")
+
     maps, env, checksum = shape()
     if maps or env or checksum:
         failures.append(f"nothing named: rendered {sorted(maps)}, {env}, checksum {checksum}")
@@ -189,5 +213,6 @@ if __name__ == "__main__":
     if not failures:
         print("ok    extras and extraSettings render one ConfigMap, KT_EXTRAS and KT_EXTRA_SETTINGS "
               "reference it and its checksum is on the pod; extraEnv wins; what is not a list of keys, "
-              "or page -> setting -> boolean, is refused; NOTES names a setting's page extras leaves out")
+              "or page -> setting -> boolean, is refused; NOTES names a setting's page extras leaves out, "
+              "and warns about several replicas only when extras names a page")
     sys.exit(1 if failures else 0)
