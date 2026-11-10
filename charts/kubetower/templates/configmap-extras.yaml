@@ -1,4 +1,6 @@
-{{- with include "kubetower.extras" . }}
+{{- $extras := include "kubetower.extras" . }}
+{{- $settings := include "kubetower.extraSettings" . }}
+{{- if or $extras $settings }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,11 +9,21 @@ metadata:
   labels:
     {{- include "kubetower.labels" $ | nindent 4 }}
 data:
+  {{- if $extras }}
   # The extra pages this console turns on, from `extras`: read by the
   # Deployment as KT_EXTRAS (configMapKeyRef), once, when the process starts.
   # The pod template carries a checksum of this ConfigMap, so changing the list
   # restarts the pod rather than leaving the old list running. Every key named
   # is on, for every cluster; the console logs a key it does not carry and
   # ignores it.
-  KT_EXTRAS: {{ . | quote }}
+  KT_EXTRAS: {{ $extras | quote }}
+  {{- end }}
+  {{- if $settings }}
+  # The extra pages' own settings, from `extraSettings`: read as
+  # KT_EXTRA_SETTINGS, once, at start, and restarted on change like the list
+  # above. Each one named has that value on every cluster, and the console's
+  # Settings page draws it as set by the deployment; the console logs a name it
+  # does not know and ignores it.
+  KT_EXTRA_SETTINGS: {{ $settings | quote }}
+  {{- end }}
 {{- end }}
