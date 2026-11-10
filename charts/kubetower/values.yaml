@@ -34,7 +34,8 @@
 
 image:
   # What the console's release workflow publishes: one image per tag
-  # v<version>, at ghcr.io/thonicdev/kubetower:<version>, built from the
+  # <version> (bare semver, `0.1.0-rc.1`), at
+  # ghcr.io/thonicdev/kubetower:<version>, built from the
   # repository's Dockerfile and stamped with that version. There is no
   # `latest`.
   #
@@ -506,11 +507,11 @@ claude:
 #
 # **This list also decides what the ClusterRole grants the extras**: each
 # extra's own reads (Argo CD's and Flux's custom resources for `argocd`, the
-# VerticalPodAutoscalers for `kubeadjust`) are granted while it is named here,
-# and only then - a page turned on through extraEnv alone gets none. Nothing
-# stronger comes with a name: Secrets, port-forwards and proxies stay behind
-# their rbac switches above. console-needs.yaml and the README say which extra
-# uses which.
+# VerticalPodAutoscalers and ControllerRevisions for `kubeadjust`) are granted
+# while it is named here, and only then - a page turned on through extraEnv
+# alone gets none. Nothing stronger comes with a name: Secrets, port-forwards
+# and proxies stay behind their rbac switches above. console-needs.yaml and the
+# README say which extra uses which.
 extras: []
 
 # The extra pages' own settings, by page and setting key, each true or false -

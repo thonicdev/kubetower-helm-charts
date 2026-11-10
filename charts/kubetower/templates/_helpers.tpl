@@ -23,10 +23,22 @@
 {{- define "kubetower.labels" -}}
 helm.sh/chart: {{ include "kubetower.chart" . }}
 {{ include "kubetower.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- with include "kubetower.version" . }}
+app.kubernetes.io/version: {{ . | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+The version the pod actually runs: image.tag when it is set, else the chart's
+appVersion - the same choice the image reference makes. A label read by Argo CD,
+`kubectl get -L` or an inventory must name what is deployed, not the
+placeholder appVersion while image.tag pins a release. A label value is at most
+63 characters, starting and ending with a letter or digit, and an image tag may
+be longer or carry a `+`, so it is fitted to that.
+*/}}
+{{- define "kubetower.version" -}}
+{{- default .Chart.AppVersion .Values.image.tag | toString | replace "+" "_" | trunc 63 | trimAll "-_." }}
 {{- end }}
 
 {{- define "kubetower.selectorLabels" -}}
