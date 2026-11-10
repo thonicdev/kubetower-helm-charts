@@ -489,8 +489,8 @@ and the render comes out wrong or fails.
 The `ClusterRole` is rendered from `charts/kubetower/console-needs.yaml` (see
 [RBAC](#rbac)), and an upgrade removes every grant the console never uses:
 `watch`; `update`; the `*/scale` and `*/status` subresources; `pods/attach`;
-`nodes/stats` and `nodes/metrics`; `get` on CustomResourceDefinitions and on
-`metrics.k8s.io`; `list` on `pods/log`; and every read of
+`nodes/stats` and `nodes/metrics`; `get` on `metrics.k8s.io`; `list` on
+`pods/log`; and every read of
 `controllerrevisions`, `podtemplates`, `volumeattachments`, `csidrivers`,
 `csinodes`, `csistoragecapacities` and `events.k8s.io` events.
 
@@ -506,8 +506,7 @@ the pod runs with this role too**, and these stop working there:
 - `kubectl rollout history` and `kubectl rollout undo` on StatefulSets and
   DaemonSets (`controllerrevisions`);
 - `kubectl top pod NAME` and `kubectl top node NAME` (`get` on
-  `metrics.k8s.io`); the unnamed forms list, and still work;
-- `kubectl get crd NAME`; `kubectl get crd` still lists.
+  `metrics.k8s.io`); the unnamed forms list, and still work.
 
 If that shell needs them, bind a role of your own to the release's
 ServiceAccount. The chart will not grant what the console does not ask for.
@@ -614,7 +613,8 @@ and grants nothing.
 Four switches are off and each one is a decision rather than a default:
 `rbac.write`, `rbac.exec`, `rbac.nodeProxy`, `rbac.prometheusProxy`.
 `rbac.customResources` is off too — the custom-resource browser needs a
-wildcard read, and a wildcard is worth typing out deliberately.
+wildcard read, and a wildcard is worth typing out deliberately. So is
+`rbac.deleteAll`, the other wildcard: `delete` on every kind, and no other verb.
 
 | Switch | What the console does with it |
 |---|---|
@@ -622,16 +622,21 @@ wildcard read, and a wildcard is worth typing out deliberately.
 | `rbac.exec` | A shell in a pod, a port-forward, and the fallback route to Prometheus |
 | `rbac.prometheusProxy` | Prometheus through the API server's service proxy (`get` on `services/proxy`), which is a proxy to every Service in the cluster unless `rbac.prometheusProxyServices` names yours as `<name>:<port>` |
 | `rbac.nodeProxy` | Per-node usage from the kubelet where there is no metrics-server |
+| `rbac.deleteAll` | Delete on every kind the console shows - Roles and RoleBindings, quotas, custom resources and their definitions, Namespaces, PersistentVolumes, Nodes - where `rbac.write` deletes only the kinds it lists. One rule: `delete` on `*` in `*`. It needs neither `rbac.write` nor `rbac.customResources` |
 
-What two of them amount to, in plain terms: **`rbac.write` is cluster-admin on
+What three of them amount to, in plain terms: **`rbac.write` is cluster-admin on
 most clusters**, because creating a pod in a namespace means running as any
 ServiceAccount there; **`rbac.nodeProxy` is a shell on every node**, because
-the kubelet API it reaches runs commands in pods. And the default read of
+the kubelet API it reaches runs commands in pods. **`rbac.deleteAll` is
+cluster-admin for deletion**: everybody who can sign in may delete anything in
+the cluster, up to their own RoleBindings with single sign-on, and all of it
+with the shared password. And the default read of
 Secrets includes this release's own, so anybody who signs in can read the
 session key and mint a session of their own.
 
 `test/rbac-check.py` refuses an escalation verb (`impersonate`, `escalate`,
-`bind`), a wildcard verb, and any wildcard but the custom-resource one. That is
+`bind`), a wildcard verb, and any wildcard but two: the custom-resource read
+(`get`, `list`) and `rbac.deleteAll`'s, whose verbs must be exactly `delete`. That is
 all it checks: it passes with every switch on, so a green run says nothing about
 whether the switches you chose are safe.
 
@@ -645,7 +650,9 @@ source at the commit the list names and fails when the source makes a request
 the list lacks, or the list names one the source never makes. Writes are the
 exception, by design: the editor reaches any kind the console lists, so the
 kinds `rbac.write` grants are this chart's choice, and the check only asks that
-each be a kind the console lists and a verb it writes with. The extras are
+each be a kind the console lists and a verb it writes with - or, for
+`rbac.deleteAll`, `delete` on every kind, which the console's Delete reaches
+since it takes its kind at run time. The extras are
 read apart, each under its key: every request an extra makes must be granted to
 it, by a line of its own (`switch: extras.<key>`) or by a line of the console's
 that names it under `extras:`. CI runs it, and **fails** where the console's

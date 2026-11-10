@@ -60,7 +60,9 @@ the list, under a switch other than an extra's. Every line in
 the list must be a request found - except writes, which are the chart's choice
 of kinds: the editor and Delete reach any kind the console lists, so a write in
 the list must be a kind the console lists with a verb it writes with, and that
-is all. The SelfSubjectAccessReview needs no grant (Kubernetes' own
+is all; and `delete` on every kind, `*` on `*`, is a write the list may
+choose when the source deletes at all, since Delete takes its kind at run
+time. The SelfSubjectAccessReview needs no grant (Kubernetes' own
 system:basic-user role holds it) and is not compared.
 
 Every request an extra makes must be in the list on a line whose switch is
@@ -138,6 +140,13 @@ DYNAMIC = {
     ("internal/edit/door.go", "verb"): "writes",
     ("internal/customresources/customresources.go", "list"): "custom-resources",
     ("internal/customresources/customresources.go", "get"): "custom-resources",
+    # The `use` question about one extension, on extras.kubetower.dev: asked
+    # about the person, answered by the cluster's RBAC, and granted to nobody
+    # by this chart - a SubjectAccessReview needs no rule on what it names.
+    ("internal/web/extras.go", "use"): "none",
+    # The reviews of the namespace's quota and limit-range lists; the lists
+    # themselves are typed calls in the same file, read on their own.
+    ("internal/detail/namespace.go", "list"): "none",
 }
 
 # A dynamic client call whose resource is only known at run time: the file and
@@ -160,11 +169,38 @@ DYNAMIC_CLIENT = {
 # call: the file and the call's arguments.
 DYNAMIC_HELPER = {
     ("internal/actions/needs.go", "where, target, verb, subresource"): "the `on` helper, whose calls are read as writes",
+    # The create affordance: edit.Create's own question, asked to say whether
+    # the page offers "+"; the create is internal/edit's, read as a write there.
+    ("internal/web/apicreate.go", 'where, edit.Target{Namespace: namespace}, "create", ""'): "the create affordance, read as a write in internal/edit",
 }
+
+# The Kubernetes project's own kinds that have no list page of their own and
+# are read through the custom-resource path (customresources.go's dynamic
+# list and get), one descriptor each. The wildcard of rbac.customResources
+# covers them; a line naming one of them grants that kind alone, without the
+# wildcard - which the list may do, so `get` and `list` on each is a choice.
+NATIVE_FILE = "internal/customresources/native.go"
+NATIVE_KIND = re.compile(r'\bgroup:\s*"([^"]*)"\s*,\s*resource:\s*"([^"]+)"')
 
 # Files that issue a raw GET by path (AbsPath). Each path they build is read
 # by the metrics.k8s.io rule; a raw path in any other file fails the run.
 ABS_PATH_FILES = {"internal/metrics/metrics.go", "internal/overview/metrics.go"}
+
+# Files that issue a raw GET by a path built at run time from a kind the
+# console already lists, and what that request is: the file and why it is
+# already counted.
+ABS_PATH_LISTED = {
+    # The kinds column's occupancy: one row, metadata only, of a kind the
+    # menu shows - a `list` its list page (or the custom-resource wildcard)
+    # already asks for, under the caller's read door.
+    "internal/resources/anyobject.go": "the kinds column's occupancy, a list of a kind already listed",
+}
+
+# Calls named Watch that are not a Kubernetes watch: the file and the receiver.
+NOT_A_WATCH = {
+    # The console's own update check, re-asked on a timer; not the cluster.
+    ("internal/launch/run.go", "p.updates"),
+}
 
 ARGS = r'\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)'   # a call's arguments, two levels of nesting
 CLIENT_RE = "|".join(sorted(CLIENTS, key=len, reverse=True))
@@ -229,6 +265,7 @@ class Scan:
         self.kinds = set()                 # the kinds table's Kind names
         self.write_verbs = set()           # (verb, subresource)
         self.file_gvrs = defaultdict(set)  # file -> {(group, resource)}
+        self.native = {}                   # (group, resource) -> file:line, from NATIVE_FILE
         self.files = 0
 
     def add(self, group, resource, verb, where):
@@ -265,6 +302,9 @@ def scan_file(scan, rel, text):
         scan.add(m.group(1), m.group(2), "list", at(m))
         if rel == "internal/resources/fetch.go":
             scan.listed[(m.group(1), m.group(2))] = at(m)
+    if rel == NATIVE_FILE:
+        for m in NATIVE_KIND.finditer(text):
+            scan.native[(m.group(1), m.group(2))] = at(m)
     if rel == "internal/resources/kinds.go":
         scan.kinds |= set(KIND_ROW.findall(text))
 
@@ -303,7 +343,8 @@ def scan_file(scan, rel, text):
             scan.dynamic["listed-get"].add((rel, "get", at(m)))
         elif verbs[0] in WRITE_VERBS:
             pass  # read by WRITE_CALL below, in internal/edit and internal/actions
-            if not rel.startswith(("internal/edit/", "internal/actions/")):
+            if not rel.startswith(("internal/edit/", "internal/actions/")) \
+                    and (rel, " ".join(args.split())) not in DYNAMIC_HELPER:
                 unplaced(m, ".Attributes(" + args + ")")
         else:
             unplaced(m, ".Attributes(" + args + ")")
@@ -362,7 +403,7 @@ def scan_file(scan, rel, text):
         if not any(line_start <= h <= m.start() for h in rest_held):
             unplaced(m, text[line_start:m.end() + 60])
     for m in ABS_PATH.finditer(text):
-        if rel not in ABS_PATH_FILES:
+        if rel not in ABS_PATH_FILES and rel not in ABS_PATH_LISTED:
             unplaced(m, text[m.start():m.start() + 120])
 
     # metrics.k8s.io, by path: every line that names it is read. A path ending
@@ -423,6 +464,9 @@ def scan_file(scan, rel, text):
         scan.add("", "pods/portforward", "get", at(m))
     typed_watch = {m.start(3) for m in TYPED.finditer(text) if m.group(3) == "Watch"}
     for m in WATCH_CALL.finditer(text):
+        receiver = re.search(r'([\w.]+)\s*$', text[max(0, m.start() - 80):m.start()])
+        if receiver and (rel, receiver.group(1)) in NOT_A_WATCH:
+            continue
         if not any(abs(m.start() - t) <= 2 for t in typed_watch):
             unplaced(m, "a watch: " + text[max(0, m.start() - 60):m.end() + 20])
     for m in WATCH_OPTION.finditer(text):
@@ -439,8 +483,8 @@ def scan_core(core):
         with open(path, encoding="utf-8") as f:
             scan_file(scan, rel, f.read())
         scan.files += 1
-    if scan.files == 0 or not scan.listed:
-        print(f"read {scan.files} Go files under {core} and found no list page - "
+    if scan.files == 0 or not scan.listed or not scan.native:
+        print(f"read {scan.files} Go files under {core} and found no list page or no kind in {NATIVE_FILE} - "
               "this is not a checkout of the console", file=sys.stderr)
         sys.exit(2)
     return scan
@@ -456,6 +500,9 @@ HOST_METHODS = {
     # Nothing by themselves: List is read from its ListQuery, Client from the
     # typed calls made on what it returns.
     "Client": [], "List": [], "ConfirmToken": [],
+    # A `get pods/log` review about the person, through the console's gate:
+    # nothing is read from the cluster.
+    "MayReadLogs": [],
     # The custom-resource catalogue.
     "Definitions": [("apiextensions.k8s.io", "customresourcedefinitions", "list")],
     # One key of one named Secret, reviewed for the person first.
@@ -651,6 +698,9 @@ def derived(scan):
     requests = defaultdict(set, {k: set(v) for k, v in scan.found.items()})
     choices = defaultdict(set)
 
+    for (group, resource), where in scan.native.items():
+        for verb in ("get", "list"):
+            choices[(group, resource, verb)].add(where)
     for _, _, where in scan.dynamic.get("listed-get", ()):
         for group, resource in scan.listed:
             requests[(group, resource, "get")].add(where)
@@ -666,6 +716,13 @@ def derived(scan):
             elif not sub:
                 for group, resource in scan.listed:
                     choices[(group, resource, verb)].add("internal/edit, internal/actions")
+                # Delete takes its kind at run time, from whatever the drawer
+                # shows - custom resources and kinds with no list page
+                # included - so `delete` on every kind (rbac.deleteAll) is a
+                # choice the source offers. Only `delete`: the editor's patch
+                # and create are not offered on every kind by this list.
+                if verb == "delete":
+                    choices[("*", "*", verb)].add("internal/edit, internal/actions")
     return requests, choices
 
 
@@ -785,10 +842,12 @@ def self_test(requests, choices, needs):
         raise SystemExit("the comparison accepted a list without `list pods`, which the console makes")
     more = needs + [{"switch": "rbac.read", "group": "", "resource": "pods", "verbs": ["watch"], "source": "self-test"},
                     {"switch": "rbac.write", "group": "apps", "resource": "deployments/scale", "verbs": ["patch"], "source": "self-test"},
-                    {"switch": "rbac.write", "group": "", "resource": "pods", "verbs": ["update"], "source": "self-test"}]
+                    {"switch": "rbac.write", "group": "", "resource": "pods", "verbs": ["update"], "source": "self-test"},
+                    {"switch": "rbac.deleteAll", "group": "*", "resource": "*", "verbs": ["patch"], "source": "self-test"}]
     _, unasked = compare(requests, choices, more)
-    if len([k for k, n in unasked if n["source"] == "self-test"]) != 3:
-        raise SystemExit(f"the comparison accepted a list asking for watch, a scale subresource or update: {unasked}")
+    if len([k for k, n in unasked if n["source"] == "self-test"]) != 4:
+        raise SystemExit(f"the comparison accepted a list asking for watch, a scale subresource, update "
+                         f"or a write other than delete on every kind: {unasked}")
 
     for label, line in PROBES:
         scan = Scan()
@@ -797,7 +856,7 @@ def self_test(requests, choices, needs):
         unlisted, _ = compare(found, {}, needs)
         if not scan.unplaced and not unlisted:
             raise SystemExit(f"the scan accepted {label}: {line.strip()}")
-    print(f"ok    self-test - a list missing a request refused, one naming watch, */scale and update refused, "
+    print(f"ok    self-test - a list missing a request refused, one naming watch, */scale, update and patch on every kind refused, "
           f"and {len(PROBES)} probe lines refused by the scan")
     print()
 

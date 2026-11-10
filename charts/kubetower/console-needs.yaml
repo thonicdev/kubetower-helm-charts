@@ -68,7 +68,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: 2d87a60e2315bbb722440c94f836941be23aa9a1
+  commit: af825bea87fc5d683570a25cb35f2f970ef2adfe
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -125,7 +125,7 @@ needs:
   # The CRD list, which is how the console knows what custom resources exist and
   # which columns to render. Reading the definitions does not grant reading the
   # objects; that is rbac.customResources below.
-  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [list], extras: [argocd], source: "internal/customresources/customresources.go"}
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [get, list], extras: [argocd], source: "internal/customresources/customresources.go; internal/customresources/native.go (get)"}
 
   # Secrets, and this is the line to think about before the others.
   #
@@ -192,6 +192,20 @@ needs:
   - {switch: rbac.write, group: networking.k8s.io, resource: ingresses, verbs: [create, patch, delete], source: "internal/edit"}
   - {switch: rbac.write, group: networking.k8s.io, resource: networkpolicies, verbs: [create, patch, delete], source: "internal/edit"}
   - {switch: rbac.write, group: autoscaling, resource: horizontalpodautoscalers, verbs: [create, patch, delete], source: "internal/edit"}
+
+  # Delete on every kind. The Delete control takes its kind at run time, from
+  # whatever the drawer shows - Roles, quotas, custom resources and their
+  # definitions, Namespaces, PersistentVolumes, Nodes - so the kinds above are
+  # not all it can reach; with this line, it reaches all of them. `delete` and
+  # nothing else: no other verb rides on the wildcard. Its own switch, not
+  # rbac.write's, and off by default.
+  #
+  # **Treat it as cluster-admin for deletion.** Granted to the pod, therefore
+  # the ceiling for everybody who signs in: under single sign-on each person
+  # deletes what their own RoleBindings allow, up to everything; with the shared
+  # password, its holder deletes anything in the cluster. test/rbac-check.py
+  # permits this wildcard beside the custom-resource one, with this verb only.
+  - {switch: rbac.deleteAll, group: "*", resource: "*", verbs: [delete], source: "internal/edit/door.go; internal/actions/needs.go (delete)"}
 
   # A shell in any pod, and a socket to any pod's port.
   #

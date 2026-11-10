@@ -190,6 +190,21 @@ rbac:
   # it is what "can create pods everywhere" means in Kubernetes.
   write: false
 
+  # delete on every kind: one rule, `*` in apiGroups and resources, with the
+  # verb `delete` and nothing else. Off. write's delete reaches only the kinds
+  # listed under it; the console offers Delete on every kind it shows, and
+  # without this, Roles and RoleBindings, quotas, custom resources and their
+  # definitions, Namespaces, PersistentVolumes, Nodes and every other
+  # cluster-scoped kind say they cannot be deleted. It needs neither write nor
+  # customResources, and grants nothing else.
+  #
+  # **Treat it as cluster-admin for deletion.** Everybody who can sign in may
+  # delete anything in the cluster - with single sign-on, up to what their own
+  # RoleBindings allow; with the shared password, all of it: every Namespace
+  # with everything in it, every CRD with every object of its kind, the RBAC
+  # that governs the cluster, this console's own release.
+  deleteAll: false
+
   # pods/exec and pods/portforward. Off. With this on, anybody with the
   # password gets a root-ish shell in any pod in the cluster, holding this
   # ServiceAccount. This is the single most expensive switch in the file.
