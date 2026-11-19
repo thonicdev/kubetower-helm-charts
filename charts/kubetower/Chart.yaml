@@ -1,0 +1,39 @@
+apiVersion: v2
+name: kubetower
+description: >-
+  The KubeTower console, in a pod. By default it runs the console's server
+  profile, which reads the pod's own ServiceAccount and has no local shell,
+  node shell or assistant; the desktop profile is one value away. With single
+  sign-on, people sign in as themselves and the cluster is asked what each may
+  do - but every request is still made as the pod's ServiceAccount, which is
+  the ceiling of what anybody can do through it.
+type: application
+
+# The chart's own version. It is not the console's.
+version: 0.4.0
+
+# The console's version, and the default image tag: the console's release
+# workflow publishes ghcr.io/thonicdev/kubetower:<version> for each tag
+# <version>, bare semver with no leading v (`0.1.0-rc.1`). Until a chart
+# release names one, this is a placeholder that names no image, and the chart
+# refuses to render it (templates/image-refused.yaml) - set image.tag to a
+# published version. Set this to that version in the change that releases the
+# chart against it, and the refusal goes away by itself.
+appVersion: "0.0.0-dev"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/thonicdev/kubetower-helm-charts
+sources:
+  - https://github.com/thonicdev/kubetower-helm-charts
+
+keywords:
+  - kubernetes
+  - console
+  - kubetower
+
+annotations:
+  # Read this before installing anywhere that more than one person can reach.
+  # The profile the defaults deploy; serverProfile=false deploys "desktop".
+  thonicdev.com/profile: "server"
+  thonicdev.com/shared-safe: "false"

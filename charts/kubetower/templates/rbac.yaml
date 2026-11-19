@@ -1,0 +1,84 @@
+{{- if .Values.rbac.create }}
+{{/*
+The console's permissions, rendered from console-needs.yaml.
+
+That file lists what the console in thonicdev/kubetower asks the cluster for,
+request by request, with the switch in values.yaml that grants each one and
+the source file that makes it. This template writes it out as rules and adds
+nothing of its own: one rule per switch, API group, verb set and narrowing,
+in the order the file lists them. Read the file for why each grant exists.
+
+An extra's own lines (`switch: extras.<key>`) are granted while `extras`
+names that extra, and only then.
+
+test/console-needs-check.py renders this role with each switch and fails when
+it grants less than the file asks for or more than it names.
+test/derive-needs.py reads the console's source and fails when the file and
+the source disagree.
+
+Not the built-in `view` ClusterRole: it excludes Secrets, which the Secrets
+page and the Helm list both need, and it carries rules for things this console
+never asks about.
+
+Two lines are wildcards, each behind its own switch and off by default:
+rbac.customResources reads every kind, rbac.deleteAll deletes every kind.
+test/rbac-check.py permits those two and no other.
+
+Not cluster-admin. Ever. Every request the console makes is made as this
+ServiceAccount, whoever signed in: with single sign-on the console first asks
+the cluster whether that person may, so this role is the ceiling of what
+anybody gets; with the shared password, its holder gets all of it.
+*/}}
+{{- $needs := (.Files.Get "console-needs.yaml" | fromYaml).needs }}
+{{- if not $needs }}
+{{- fail "console-needs.yaml lists nothing, or is missing from the chart: the role would grant nothing the console asks for" }}
+{{- end }}
+{{- $order := list }}
+{{- $rules := dict }}
+{{- range $needs }}
+{{- if eq (include "kubetower.rbacSwitch" (dict "switch" .switch "rbac" $.Values.rbac "extras" $.Values.extras)) "true" }}
+{{- $names := list }}
+{{- with .resourceNamesFrom }}
+{{- $names = index $.Values.rbac . | default list }}
+{{- end }}
+{{- $key := printf "%s|%s|%s|%s" .switch .group (join "," .verbs) (join "," $names) }}
+{{- if not (hasKey $rules $key) }}
+{{- $order = append $order $key }}
+{{- $_ := set $rules $key (dict "group" .group "verbs" .verbs "names" $names "resources" list) }}
+{{- end }}
+{{- $rule := get $rules $key }}
+{{- $_ := set $rule "resources" (append $rule.resources .resource) }}
+{{- end }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+rules:
+{{- range $order }}
+{{- $rule := get $rules . }}
+  - apiGroups: [{{ $rule.group | quote }}]
+    resources: {{ toJson $rule.resources }}
+    {{- with $rule.names }}
+    resourceNames: {{ toJson . }}
+    {{- end }}
+    verbs: {{ toJson $rule.verbs }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubetower.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubetower.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

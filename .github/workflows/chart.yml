@@ -1,0 +1,914 @@
+# What a red cross here means: the chart would install something different from
+# what it says it installs.
+#
+# It does not install anything. Nothing in this workflow reaches a cluster, so
+# nothing here proves the chart works - only that it renders, and that what it
+# renders does not grant more than the README claims. The install path is tested
+# by hand against a real cluster, and that is stated rather than implied.
+name: chart
+on:
+  # `edited` for the public job's scan of the title and description; the rest
+  # of the workflow reruns with it, which costs a minute and changes nothing.
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint and template
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      # The defaults are what most people install, so they are linted first and
+      # on their own - a failure here is a failure for everybody. With an image
+      # tag, here and below: while the chart's appVersion is the 0.0.0-dev
+      # placeholder, a render without one is refused (asserted further down).
+      - name: Lint the defaults
+        run: helm lint ./charts/kubetower --set image.tag=0.0.0-ci
+
+      # And every dangerous toggle on, because a template that only renders in
+      # its default shape has whole branches nothing has ever parsed.
+      - name: Lint with every toggle on
+        run: |
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci \
+            --set rbac.write=true --set rbac.exec=true --set rbac.nodeProxy=true \
+            --set rbac.customResources=true --set rbac.readSecrets=true \
+            --set rbac.metrics=true --set rbac.prometheusProxy=true --set serverProfile=true \
+            --set ingress.enabled=true --set ingress.hosts[0].host=example.test \
+            --set networkPolicy.enabled=true --set 'extras={alfa,bravo}'
+
+      # Single sign-on on, with every optional value set, because its whole
+      # block is behind `if .issuer` and nothing else renders it.
+      - name: Lint with single sign-on configured
+        run: |
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci \
+            --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+            --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
+            --set auth.oidc.clientSecret.existingSecret=kubetower-oidc \
+            --set auth.oidc.discoveryURL=http://dex.dex.svc:5556/dex \
+            --set auth.oidc.groupsClaim=groups --set auth.oidc.usernameClaim=email \
+            --set auth.oidc.groupsPrefix=oidc: --set auth.oidc.sessionMax=8h \
+            --set auth.oidc.usernamePrefix=oidc: --set auth.localAccount=true \
+            --set "auth.trustedProxies={10.244.0.0/16}"
+
+      # The development environment's values, dev/values.yaml, lint, render,
+      # and agree with the Dex fixture they are written for: its issuer, its
+      # client and that client's secret and redirect. Two files describing one
+      # environment drift apart quietly, and every way they do looks the same in
+      # a browser - a sign-in that fails. And the custom-resource read, which
+      # the defaults leave off and development turns on. --self-test first: it
+      # changes one thing at a time on the real render and fails unless each is
+      # refused.
+      - name: The development values render, and agree with the Dex fixture
+        run: |
+          set -o pipefail
+          helm lint ./charts/kubetower -f dev/values.yaml
+          python test/dev-values-check.py --self-test
+
+      # The username prefix is passed as it is, or not at all. Unset must leave
+      # the variable out, so the console applies kube-apiserver's default; `-`
+      # is the console's own spelling of "no prefix" and must arrive as `-`,
+      # not be dropped as if it were empty. A RoleBinding names the result, so
+      # a value lost here is everybody's rights gone.
+      - name: The username prefix reaches the console only when it is set
+        run: |
+          # The default shell is `bash -e` without pipefail: a render that
+          # failed would hand python an empty stream, which prints `<absent>`,
+          # which is exactly what the unset case expects.
+          set -o pipefail
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          prefix() {
+            helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci $oidc "$@" | python -c '
+          import sys, yaml
+          env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if e["name"] == "KT_OIDC_USERNAME_PREFIX"]
+          print(env[0]["value"] if env else "<absent>")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(prefix "$@")
+            [ "$got" = "$want" ] || { echo "with '$*': want $want, got $got"; exit 1; }
+            echo "with '${*:-nothing set}': $got"
+          }
+          check '<absent>'
+          check '-'        --set auth.oidc.usernamePrefix=-
+          check 'oidc:'    --set auth.oidc.usernamePrefix=oidc:
+          check 'https://idp.example/dex#' --set-string 'auth.oidc.usernamePrefix=https://idp.example/dex#'
+
+      # The trusted proxies reach the console only when there are some. Unset
+      # must leave the variable out (the console's own default, none); a list
+      # and a string both arrive as the comma-separated form the console reads;
+      # an empty string is none, not one empty entry the console would refuse.
+      - name: The trusted proxies reach the console only when they are set
+        run: |
+          set -o pipefail
+          proxies() {
+            helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          env = [e for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]
+                 if e["name"] == "KT_TRUSTED_PROXIES"]
+          print(env[0]["value"] if env else "<absent>")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(proxies "$@")
+            [ "$got" = "$want" ] || { echo "with '$*': want $want, got $got"; exit 1; }
+            echo "with '${*:-nothing set}': $got"
+          }
+          check '<absent>'
+          check '<absent>'                  --set-string 'auth.trustedProxies='
+          check '10.244.0.0/16'             --set 'auth.trustedProxies={10.244.0.0/16}'
+          check '10.244.0.0/16,192.0.2.10'  --set 'auth.trustedProxies={10.244.0.0/16,192.0.2.10}'
+          check '10.0.0.0/8,fd00::/8'       --set-string 'auth.trustedProxies=10.0.0.0/8 fd00::/8'
+          check '10.0.0.0/8,fd00::/8'       --set-string "auth.trustedProxies=10.0.0.0/8$(printf '\t')fd00::/8"
+          # One entry per line, as a block scalar in a values file: the
+          # console splits on commas and spaces only, so the newlines must not
+          # reach it.
+          printf 'auth:\n  trustedProxies: |\n    10.0.0.0/8\n    fd00::/8\n\n    192.0.2.10\n' > "$RUNNER_TEMP/proxies-block.yaml"
+          check '10.0.0.0/8,fd00::/8,192.0.2.10' -f "$RUNNER_TEMP/proxies-block.yaml"
+          # extraEnv setting KT_TRUSTED_PROXIES as well wins, and the chart's
+          # own entry is left out: one entry, not two.
+          both="--set auth.trustedProxies={10.0.0.0/8} --set extraEnv[0].name=KT_TRUSTED_PROXIES --set extraEnv[0].value=192.0.2.1"
+          n=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci $both | grep -c 'name: KT_TRUSTED_PROXIES')
+          [ "$n" = 1 ] || { echo "with extraEnv as well: $n KT_TRUSTED_PROXIES entries, want 1"; exit 1; }
+          check '192.0.2.1' $both
+          if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.trustedProxies=true 2>&1); then
+            echo "NOT REFUSED: a boolean auth.trustedProxies"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q 'auth.trustedProxies' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a boolean auth.trustedProxies is refused, naming it"
+
+      # app.kubernetes.io/version names the image the pod runs: image.tag when
+      # it is set, else appVersion. Argo CD, `kubectl get -L` and inventories
+      # read the label, so a pinned tag labelled with the placeholder appVersion
+      # says something untrue on every object. A copy of the chart with a real
+      # appVersion renders the unset case, which the placeholder refuses.
+      - name: The version label is the tag deployed, or appVersion when no tag is set
+        run: |
+          set -o pipefail
+          chart=$RUNNER_TEMP/version-label
+          cp -r charts/kubetower "$chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$chart/Chart.yaml"
+          check() {
+            want="$1"; shift
+            helm template kubetower "$chart" --set ingress.enabled=true --set replicaCount=2 --set persistence.enabled=false \
+                --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+                --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback "$@" \
+              | WANT="$want" python -c '
+          import os, sys, yaml
+          want = os.environ["WANT"]
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          got = {d["kind"] + "/" + d["metadata"]["name"]: (d["metadata"].get("labels") or {}).get("app.kubernetes.io/version") for d in docs}
+          wrong = {k: v for k, v in got.items() if v != want}
+          image = [c["image"] for d in docs if d["kind"] == "Deployment" for c in d["spec"]["template"]["spec"]["containers"]]
+          if wrong or len(got) < 5 or not image[0].endswith(":" + want):
+              sys.exit(f"want {want} on every object and in the image, got {wrong or got}, image {image}")
+          print(f"{len(got)} objects labelled {want}, image {image[0]}")'
+            echo "with '${*:-no image.tag}': ok"
+          }
+          check 9.9.9
+          check 0.1.0-rc.1 --set image.tag=0.1.0-rc.1
+
+      # `helm lint` does not parse what it renders; it can pass on a template
+      # that produces invalid YAML. This is the parse.
+      - name: The rendered manifests are valid YAML
+        run: |
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set serverProfile=true \
+            | python -c 'import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d), "documents parsed")'
+
+      # Several replicas: the Valkey StatefulSet, its Service and Secret, and
+      # the three variables the console reads. Everything about it is behind
+      # `replicaCount > 1`, so nothing above renders a line of it.
+      - name: Several replicas render, and parse
+        run: |
+          helm lint ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+            --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
+              --set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=kubetower \
+              --set auth.oidc.redirectURL=https://kubetower.example/api/auth/oidc/callback \
+            | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          kinds = sorted(d["kind"] + "/" + d["metadata"]["name"] for d in docs)
+          assert "StatefulSet/kubetower-valkey" in kinds, kinds
+          assert "Secret/kubetower-valkey" in kinds, kinds
+          env = {e["name"] for d in docs if d["kind"] == "Deployment"
+                 for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+          assert {"KT_REPLICATED", "KT_VALKEY_ADDR", "KT_VALKEY_PASSWORD"} <= env, env
+          print(len(docs), "documents parsed, Valkey and its three variables present")'
+
+      # And the ones the chart refuses. Each must fail, and fail naming its
+      # reason: a `fail` nobody has seen fire is a refusal nobody knows is
+      # connected - the rbac check below runs its --self-test for the same
+      # reason.
+      - name: Incoherent replica configurations are refused
+        run: |
+          set -u
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          refused() {
+            want="$1"; shift
+            if out=$(helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            echo "$out" | grep -q "$want" || { echo "refused without naming '$want': $out"; exit 1; }
+            echo "refused, naming '$want': $*"
+          }
+          refused "persistence.enabled is true" --set replicaCount=2 $oidc
+          refused "serverProfile is false" --set replicaCount=2 --set persistence.enabled=false --set serverProfile=false $oidc
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false
+          refused "no auth.passwordHash" --set replicaCount=2 --set persistence.enabled=false --set auth.localAccount=true $oidc
+          refused "valkey.existingSecretKey is empty" --set replicaCount=2 --set persistence.enabled=false \
+            --set valkey.existingSecret=mine --set valkey.existingSecretKey= $oidc
+          refused "read by nothing" --set valkey.existingSecret=mine
+          # The control: the same values made coherent render.
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false $oidc > /dev/null
+          helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set replicaCount=2 --set persistence.enabled=false \
+            --set auth.passwordHash='$2a$12$abcdefghijklmnopqrstuv' > /dev/null
+          echo "the coherent configurations render"
+
+      # The init container writes the Valkey password into its configuration.
+      # Run exactly as rendered, in the pinned image, with passwords chosen to
+      # break naive quoting. Local docker only; nothing reaches a cluster.
+      - name: Valkey takes any password it can authenticate, and refuses the rest
+        run: |
+          pip install pyyaml
+          python test/valkey-password-check.py
+
+      # The pod reads its password hash, its session key and KT_EXTRAS once,
+      # at start, so a Secret or a ConfigMap that changes under an unchanged
+      # Deployment changes nothing.
+      - name: A changed credential, or a changed list of extra pages, restarts the pod
+        run: python test/checksum-check.py
+
+      # `extras` reaches the console as KT_EXTRAS, by reference to the
+      # ConfigMap the chart renders for it - and not at all when it names
+      # nothing, or when extraEnv sets KT_EXTRAS itself. What is not a list of
+      # keys is refused, naming the value.
+      - name: The extra pages reach the console through their ConfigMap
+        run: python test/extras-check.py
+
+      # The console ignores a session key under 32 characters and draws its
+      # own, so a short auth.sessionSecret would look fixed and be random.
+      - name: A session key the console would ignore is refused
+        run: |
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth.sessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a five-character session key was accepted"
+            exit 1
+          fi
+          grep 'shorter than 32 characters' refused.txt
+
+      # The key is remembered for the rest of a render under
+      # auth._drawnSessionSecret, in the values. Set from outside, that key
+      # would be taken as already drawn - a five-character session key past
+      # the check above. values.schema.json refuses it before rendering.
+      - name: The session key's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set auth._drawnSessionSecret=short > /dev/null 2> refused.txt; then
+            echo "::error::a session key set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnSessionSecret' refused.txt
+
+      # The same for the Valkey password's memo, valkey._drawnPassword: set
+      # from outside, it would replace the password already in the cluster
+      # with one of the user's choosing, an empty one included.
+      - name: The Valkey password's memo cannot be set from outside
+        run: |
+          if helm template kubetower ./charts/kubetower --set image.tag=0.0.0-ci --set valkey._drawnPassword=x > /dev/null 2> refused.txt; then
+            echo "::error::a Valkey password set through the render's memo was accepted"
+            exit 1
+          fi
+          grep '_drawnPassword' refused.txt
+
+      # The default image is the one the console's release workflow publishes,
+      # ghcr.io/thonicdev/kubetower:<appVersion>. While appVersion is the
+      # 0.0.0-dev placeholder no registry holds that image, so a render without
+      # image.tag must be refused, naming the value to set - and the moment
+      # appVersion names a release, the defaults must render exactly that image.
+      - name: The default image is the published one, and a placeholder is refused
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          image() {
+            helm template kubetower "$chart" "$@" | python -c '
+          import sys, yaml
+          deps = [d for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment"]
+          print(deps[0]["spec"]["template"]["spec"]["containers"][0]["image"])'
+          }
+          app=$(helm show chart "$chart" | python -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["appVersion"])')
+          if [ "$app" = 0.0.0-dev ]; then
+            if out=$(helm template kubetower "$chart" 2>&1); then
+              echo "NOT REFUSED: the defaults render $(printf '%s\n' "$out" | grep -m1 'image:')"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -q 'image.tag is empty' || { echo "refused without naming image.tag: $out"; exit 1; }
+            echo "refused, naming image.tag: appVersion is the placeholder"
+            want=ghcr.io/thonicdev/kubetower:1.2.3
+            got=$(image --set image.tag=1.2.3)
+          else
+            want=ghcr.io/thonicdev/kubetower:$app
+            got=$(image)
+          fi
+          [ "$got" = "$want" ] || { echo "the image is $got, want $want"; exit 1; }
+          echo "the image is $got"
+
+      # Several consoles survive a drain one at a time: a PodDisruptionBudget
+      # and a spread across nodes, selecting the consoles and not Valkey. With
+      # one replica, neither - a budget on one pod blocks a drain or does
+      # nothing.
+      - name: A disruption budget and a spread render only with several replicas
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          shape() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          dep = [d for d in docs if d["kind"] == "Deployment"][0]
+          pods = dep["spec"]["selector"]["matchLabels"]
+          pdbs = [d for d in docs if d["kind"] == "PodDisruptionBudget"]
+          for p in pdbs:
+              assert p["spec"]["selector"]["matchLabels"] == pods, ("the budget selects", p["spec"]["selector"], "not", pods)
+          spread = dep["spec"]["template"]["spec"].get("topologySpreadConstraints") or []
+          for c in spread:
+              assert c["labelSelector"]["matchLabels"] == pods, ("the spread selects", c["labelSelector"], "not", pods)
+          print(len(pdbs), len(spread), pdbs[0]["spec"].get("maxUnavailable") if pdbs else "-")'
+          }
+          check() {
+            want="$1"; shift
+            got=$(shape "$@")
+            [ "$got" = "$want" ] || { echo "with '${*:-defaults}': want budgets/spreads/maxUnavailable $want, got $got"; exit 1; }
+            echo "with '${*:-defaults}': $got"
+          }
+          check "0 0 -"
+          check "1 1 1" --set replicaCount=2 --set persistence.enabled=false $oidc
+          check "1 1 1" --set replicaCount=3 --set persistence.enabled=false $oidc
+          check "0 1 -" --set replicaCount=2 --set persistence.enabled=false --set podDisruptionBudget.enabled=false $oidc
+
+      # The root filesystem is read-only, and each directory the console writes
+      # - the state directory, $HOME, the assistant's configuration directory
+      # inside it, and /tmp - is a volume. The configuration directory has to
+      # exist at start: the console writes into it without creating it, under
+      # either profile. Each emptyDir carries a size limit. Under both profiles,
+      # since the desktop one writes the same places.
+      - name: The root filesystem is read-only, and every directory the console writes is a volume
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          for profile in true false; do
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci --set serverProfile=$profile | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          spec = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]
+          c = spec["containers"][0]
+          assert c["securityContext"].get("readOnlyRootFilesystem") is True, c["securityContext"]
+          volumes = {v["name"]: v for v in spec["volumes"]}
+          mounts = {m["mountPath"]: m for m in c["volumeMounts"]}
+          for path in ["/var/lib/kubetower", "/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
+              assert path in mounts, (path, "is not mounted", sorted(mounts))
+              assert not mounts[path].get("readOnly"), (path, "is mounted read-only")
+              assert not mounts[path].get("subPath"), (path, "mounts only a sub-path")
+          for path in ["/home/kubetower", "/home/kubetower/.claude", "/tmp"]:
+              assert "emptyDir" in volumes[mounts[path]["name"]], (path, "is not an emptyDir")
+              assert volumes[mounts[path]["name"]]["emptyDir"].get("sizeLimit"), (path, "has no sizeLimit")
+          print("read-only root, writable:", ", ".join(sorted(p for p in mounts if not mounts[p].get("readOnly"))))' \
+              | sed "s/^/serverProfile=$profile: /"
+          done
+
+      # Shutdown and memory: a pause before SIGTERM, a grace period covering
+      # it and the console's five-second shutdown, a startup probe, a timeout
+      # on every probe, and GOMEMLIMIT at 90% of the 1Gi limit. And a grace
+      # period too short to hold them is refused.
+      - name: The pod shuts down in its grace period, and the Go heap knows its limit
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          helm template kubetower "$chart" --set image.tag=0.0.0-ci | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          spec = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]
+          c = spec["containers"][0]
+          pause = int(c["lifecycle"]["preStop"]["exec"]["command"][1])
+          grace = spec["terminationGracePeriodSeconds"]
+          assert grace >= pause + 5, ("grace", grace, "pause", pause)
+          for probe in ["startupProbe", "livenessProbe", "readinessProbe"]:
+              assert c[probe].get("timeoutSeconds"), (probe, "has no timeout")
+          # Readiness is the judgement of the console itself (/readyz); liveness only
+          # asks whether it is serving (/healthz).
+          assert c["readinessProbe"]["httpGet"]["path"] == "/readyz", c["readinessProbe"]
+          assert c["livenessProbe"]["httpGet"]["path"] == "/healthz", c["livenessProbe"]
+          env = {e["name"]: e.get("value") for e in c["env"]}
+          assert env.get("GOMEMLIMIT") == str(1024 ** 3 * 90 // 100), env.get("GOMEMLIMIT")
+          print("preStop", pause, "s, grace", grace, "s, GOMEMLIMIT", env["GOMEMLIMIT"])'
+          # Each unit is its own multiplier, so more than one is checked; and a
+          # plain byte count in a values file, which YAML hands Helm as a float.
+          mem() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          c = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          print({e["name"]: e.get("value") for e in c["env"]}.get("GOMEMLIMIT"))'
+          }
+          mem_is() {
+            want="$1"; shift
+            got=$(mem "$@")
+            [ "$got" = "$want" ] || { echo "with $*: GOMEMLIMIT is $got, want $want"; exit 1; }
+            echo "with $*: GOMEMLIMIT $got"
+          }
+          mem_is 483183820 --set resources.limits.memory=512Mi
+          mem_is 1350000000 --set resources.limits.memory=1500M
+          mem_is 92160 --set resources.limits.memory=100Ki
+          values=$(mktemp)
+          printf 'resources:\n  limits:\n    memory: 1073741824\n' > "$values"
+          mem_is 966367641 -f "$values"
+          if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci --set resources.limits.memory=1.5Gi 2>&1); then
+            echo "NOT REFUSED: a 1.5Gi limit"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'resources.limits.memory is "1.5Gi"' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a 1.5Gi limit is refused, naming the value"
+          # Set by hand in extraEnv, GOMEMLIMIT is not rendered twice.
+          n=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci \
+                --set 'extraEnv[0].name=GOMEMLIMIT' --set 'extraEnv[0].value=500MiB' | grep -c 'name: GOMEMLIMIT')
+          [ "$n" = 1 ] || { echo "GOMEMLIMIT rendered $n times with extraEnv setting it"; exit 1; }
+          if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci --set terminationGracePeriodSeconds=6 2>&1); then
+            echo "NOT REFUSED: a six-second grace period"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q 'terminationGracePeriodSeconds is 6' || { echo "refused without naming the value: $out"; exit 1; }
+          echo "a grace period shorter than the pause and the shutdown is refused"
+
+      # Under the server profile the console reads the pod's own
+      # ServiceAccount and never KUBECONFIG, so neither the kubeconfig
+      # ConfigMap nor the variable is rendered. The desktop profile still gets
+      # both.
+      - name: The server profile renders no kubeconfig
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          kubeconfig() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          cm = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-kubeconfig")]
+          c = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["template"]["spec"]["containers"][0]
+          env = [e for e in c["env"] if e["name"] == "KUBECONFIG"]
+          print(len(cm), len(env))'
+          }
+          [ "$(kubeconfig)" = "0 0" ] || { echo "the server profile renders a kubeconfig: $(kubeconfig)"; exit 1; }
+          echo "server profile: no ConfigMap, no KUBECONFIG"
+          [ "$(kubeconfig --set serverProfile=false)" = "1 1" ] || { echo "the desktop profile lost its kubeconfig"; exit 1; }
+          echo "desktop profile: the ConfigMap and KUBECONFIG"
+
+      # Off by default; on, one policy for the console's port and, with several
+      # replicas, one admitting Valkey's port from the consoles only.
+      - name: The NetworkPolicy renders only when asked, and admits Valkey from the consoles
+        run: |
+          set -o pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          policies() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" | python -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          pols = [d for d in docs if d["kind"] == "NetworkPolicy"]
+          consoles = [d for d in docs if d["kind"] == "Deployment"][0]["spec"]["selector"]["matchLabels"]
+          for p in pols:
+              if p["metadata"]["name"].endswith("-valkey"):
+                  peers = p["spec"]["ingress"][0]["from"]
+                  assert peers == [{"podSelector": {"matchLabels": consoles}}], peers
+          print(len(pols))'
+          }
+          [ "$(policies)" = 0 ] || { echo "a NetworkPolicy rendered by default"; exit 1; }
+          [ "$(policies --set networkPolicy.enabled=true)" = 1 ] || { echo "want one policy with one replica"; exit 1; }
+          [ "$(policies --set networkPolicy.enabled=true --set replicaCount=2 --set persistence.enabled=false $oidc)" = 2 ] \
+            || { echo "want two policies with several replicas"; exit 1; }
+          echo "none by default; the console's alone with one replica; Valkey's from the consoles with several"
+
+      # A single sign-on prefix in Kubernetes' own `system:` namespace is
+      # refused at render, by the console's own rule: trimmed and
+      # case-insensitively, the user-name prefix as applied (`-` is none), and
+      # only with an issuer. Each refusal must name the value and the reason;
+      # the controls must render.
+      - name: A system prefix for single sign-on is refused
+        run: |
+          set -uo pipefail
+          chart=./charts/kubetower
+          oidc="--set auth.oidc.issuer=https://idp.example/dex --set auth.oidc.clientID=k --set auth.oidc.redirectURL=https://k.example/api/auth/oidc/callback"
+          refused() {
+            want="$1"; shift
+            if out=$(helm template kubetower "$chart" --set image.tag=0.0.0-ci $oidc "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without naming $want: $out"; exit 1; }
+            printf '%s\n' "$out" | grep -qF 'starts with "system:"' || { echo "refused without saying why: $out"; exit 1; }
+            echo "refused, naming $want: $*"
+          }
+          renders() {
+            helm template kubetower "$chart" --set image.tag=0.0.0-ci "$@" > /dev/null || { echo "REFUSED: $*"; exit 1; }
+            echo "renders: $*"
+          }
+          refused 'auth.oidc.usernamePrefix is "system:foo"' --set-string auth.oidc.usernamePrefix=system:foo
+          refused 'auth.oidc.usernamePrefix is " System:foo"' --set-string 'auth.oidc.usernamePrefix= System:foo'
+          refused 'auth.oidc.groupsPrefix is "system:"' --set-string auth.oidc.groupsPrefix=system:
+          refused 'auth.oidc.groupsPrefix is "SYSTEM:x"' --set-string auth.oidc.groupsPrefix=SYSTEM:x
+          # Unset, the prefix is the issuer and '#' - unless the claim is email.
+          refused 'auth.oidc.usernamePrefix is unset' --set auth.oidc.issuer=system:idp --set auth.oidc.usernameClaim=sub
+          renders $oidc --set-string auth.oidc.usernamePrefix=-
+          renders $oidc --set-string auth.oidc.usernamePrefix=oidc:
+          renders $oidc
+          renders $oidc --set auth.oidc.usernameClaim=sub
+          renders $oidc --set-string auth.oidc.groupsPrefix=oidc:
+          renders --set-string auth.oidc.usernamePrefix=system:foo --set-string auth.oidc.groupsPrefix=system:
+          renders $oidc --set auth.oidc.issuer=system:idp
+
+  rbac:
+    name: the ClusterRole carries no escalation verb and no stray wildcard, and grants exactly what the console asks for
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      # No job token left in the checkout's git config: the derivation step
+      # below sends its own Authorization header, and GitHub answers 400 to a
+      # request carrying two.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+      - run: pip install pyyaml
+      # --self-test first: it refuses a deliberately bad role and fails the job
+      # if it does not. A checker nobody has seen fail is a checker nobody knows
+      # is connected.
+      - run: python test/rbac-check.py --self-test
+      # The role is rendered from charts/kubetower/console-needs.yaml - what the
+      # console asks the cluster for, with the source file of each. For every
+      # combination of switches, the role must grant each request whose switch
+      # is on and nothing else: a control the role refuses answers 403 for
+      # every person, whatever their own RoleBindings say, and a grant nobody
+      # asks for is held by everybody who signs in. And the defaults grant
+      # nothing behind an off-by-default switch. --self-test first, for the
+      # reason above.
+      - name: the role grants exactly what the console asks for
+        run: |
+          set -o pipefail
+          python test/console-needs-check.py --self-test
+      # And the list against the console's own source, at the commit the list
+      # names: every request the source makes is in the list, and every line of
+      # the list is a request it makes. Fetched by that commit, so this answers
+      # for the list as committed and a change in the console does not turn an
+      # unrelated pull request red; moving the commit is a change to the list.
+      #
+      # The console's repository must be readable from here for this to run,
+      # and **where it is not, the step fails**. It used to warn NOT RUN and
+      # pass, and a check that passes without having compared anything is
+      # read as green by everybody who does not open the log.
+      #
+      # The console is private until its 0.1.0 release, so it is read with
+      # KUBETOWER_READ_TOKEN: a fine-grained token holding Contents: read on
+      # thonicdev/kubetower and nothing else, kept as a secret of this
+      # repository. The secret is referenced only by the step that runs on a
+      # push to main, never on a pull request, from a fork or not: a pull
+      # request's code never runs beside it. On a pull request the comparison
+      # is skipped, with a notice that says so; it runs on the merge to main.
+      # The token reaches git as an http.extraheader through GIT_CONFIG_*
+      # environment variables - never in a URL, a file, the checkout's config
+      # or a command line - after an empty value that clears any header
+      # already configured, and the header value is masked as well as the
+      # secret. Locally, with a checkout of the console beside this one at the
+      # commit the list names:
+      #   python test/derive-needs.py --self-test --core ../kubetower
+      - name: the list is what the console's source asks for (skipped on a pull request)
+        if: github.event_name != 'push'
+        run: |
+          echo "::notice::console-needs.yaml was NOT compared with the console's source: the console is private and its read token is used on pushes only. The comparison runs on the merge to main; to run it now: python test/derive-needs.py --self-test --core <checkout of the console at the listed commit>"
+          echo "**Derivation not run on a pull request**: it runs on the push to main, with KUBETOWER_READ_TOKEN." >> "$GITHUB_STEP_SUMMARY"
+      - name: the list is what the console's source asks for
+        if: github.event_name == 'push'
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+          KUBETOWER_READ_TOKEN: ${{ secrets.KUBETOWER_READ_TOKEN }}
+        run: |
+          set -o pipefail
+          if [ -z "$KUBETOWER_READ_TOKEN" ]; then
+            echo "::error::the repository secret KUBETOWER_READ_TOKEN is missing or empty, so console-needs.yaml cannot be compared with the console's private source. Create it: a fine-grained token, Contents: read on thonicdev/kubetower only. This is a failure, not a skip."
+            echo "**Derivation FAILED - not run**: KUBETOWER_READ_TOKEN is missing." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! derived=$(python -c '
+          import yaml
+          d = yaml.safe_load(open("charts/kubetower/console-needs.yaml"))["derivedFrom"]
+          print(d["repository"], d["commit"])' | tr -d '\r'); then
+            echo "::error::charts/kubetower/console-needs.yaml could not be read for its derivedFrom repository and commit (python's answer above)"
+            exit 1
+          fi
+          read -r url commit <<< "$derived"
+          [ -n "$url" ] && [ -n "$commit" ] && [ "$url" != None ] && [ "$commit" != None ] || { echo "::error::console-needs.yaml names no derivedFrom repository and commit"; exit 1; }
+          auth=$(printf 'x-access-token:%s' "$KUBETOWER_READ_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          # Scoped to github.com, so the header goes nowhere else. The empty
+          # value first resets the multi-valued key, so exactly one
+          # Authorization header is sent whatever the checkout configured.
+          export GIT_CONFIG_COUNT=2
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0=
+          export GIT_CONFIG_KEY_1=http.https://github.com/.extraheader GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $auth"
+          # Bounded: an unreadable repository must answer, not hang the job.
+          rc=0
+          timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1 || rc=$?
+          if [ $rc -ne 0 ]; then
+            sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
+            if [ $rc -eq 124 ]; then
+              why="git did not answer within 60 seconds"
+            elif grep -qiE 'authentication failed|not found|returned error: 40[134]|invalid username or token' "$RUNNER_TEMP/ls-remote.txt"; then
+              # A token limited to one repository answers 404 for any other,
+              # so a wrong URL and a refused token look the same from here.
+              why="GitHub refused KUBETOWER_READ_TOKEN (expired, revoked, or not granted Contents: read on it), or derivedFrom.repository is not the console's URL"
+            else
+              why="git could not read it, for the reason it gave above (not a refusal of the token)"
+            fi
+            echo "::error::$url was not read: $why. console-needs.yaml was not compared with the console's source at $commit. This is a failure, not a skip."
+            echo "**Derivation FAILED - not run**: $url was not read ($why); console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          git init -q "$RUNNER_TEMP/core"
+          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
+          git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
+          python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
+
+  # The release path, without the release. release.yml runs
+  # .github/scripts/publish-chart.sh on a chart tag against ghcr.io; this runs
+  # the same script against a registry living only for this job, so a release
+  # takes no step that CI has not taken. Nothing leaves the runner.
+  publish:
+    name: the chart packages, pushes, and comes back identical
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    services:
+      registry:
+        image: registry:2.8.3
+        ports: ["5000:5000"]
+    steps:
+      # Pinned as release.yml pins them; the history is for the main-branch check.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.3
+          token: ""
+      # First the refusals, which must stop a release before anything is
+      # pushed: a tag that is not the chart's version; while appVersion is the
+      # placeholder, any tag at all; on a pull request, a commit that is not on
+      # main; and a role derived from another console commit than the
+      # console's tag <appVersion> (bare semver, no leading v), or a readable
+      # console repository with no such tag - one tagged only with the old
+      # v-prefixed name included - or one that cannot be read for any reason but a missing
+      # credential, or an appVersion that is not a semantic version. The cases
+      # about the console run on a copy of the chart with a real-looking
+      # appVersion, against console repositories and a server made here, so
+      # that they do not depend on what the real console has tagged.
+      - name: what a release must refuse before it pushes, is refused
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -o pipefail
+          refused() {
+            want="$1"; shift
+            if out=$(bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              echo "NOT REFUSED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "refused without saying why: $out"; exit 1; }
+            echo "refused ($want): $*"
+          }
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          app=$(sed -n 's/^appVersion:[[:space:]]*//p' charts/kubetower/Chart.yaml | tr -d '"')
+          local=oci://localhost:5000/charts
+          refused "the tag is kubetower-0.0.0-not-this" kubetower-0.0.0-not-this "$local" --plain-http --allow-placeholder
+          if [ "$app" = 0.0.0-dev ]; then
+            refused "appVersion is the 0.0.0-dev placeholder" "kubetower-$version" "$local" --plain-http
+          fi
+          if [ "$EVENT" = pull_request ]; then
+            refused "is not on origin/main" "kubetower-$version" "$local" --plain-http --allow-placeholder --on-branch origin/main
+          fi
+          copy=$RUNNER_TEMP/tie
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" tag 9.9.9
+          git init -q "$copy/untagged"
+          git -C "$copy/untagged" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "no release"
+          git init -q "$copy/prefixed"
+          git -C "$copy/prefixed" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "the old tag name"
+          git -C "$copy/prefixed" tag v9.9.9
+          head=$(git -C "$copy/prefixed" rev-parse HEAD)
+          sed "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml" > "$copy/prefixed-needs.yaml"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            refused "console-needs.yaml was derived from" "kubetower-$version" "$local" --plain-http
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/untagged \
+            refused "the console has no tag 9.9.9" "kubetower-$version" "$local" --plain-http
+          # A console whose only tag is v9.9.9, on the very commit the role was
+          # derived from, still has no tag 9.9.9: the old name does not count.
+          cp -r "$copy/chart" "$copy/chart-prefixed"
+          cp "$copy/prefixed-needs.yaml" "$copy/chart-prefixed/console-needs.yaml"
+          CHART_DIR=$copy/chart-prefixed CONSOLE_REPO=$copy/prefixed \
+            refused "the console has no tag 9.9.9" "kubetower-$version" "$local" --plain-http
+          # A console repository that cannot be read for any reason but a
+          # missing credential is refused: a missing repository, a server
+          # error and a 403 (test/git-http-fixture.py answers 403 under
+          # /forbidden/ and 500 outside /auth/), and a name that does not
+          # resolve. Each is a release that could have been checked. The
+          # fixture cases also assert the status git reported, so a fixture
+          # that never started cannot pass them as "connection refused".
+          python3 test/git-http-fixture.py 8765 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8765/ || { echo "the git fixture did not start"; exit 1; }
+          not_auth="the answer was not the missing-credential one"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/nowhere \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          for code in 500:fail 403:forbidden; do
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "$not_auth" "kubetower-$version" "$local" --plain-http
+            CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8765/${code#*:}/console \
+              refused "returned error: ${code%%:*}" "kubetower-$version" "$local" --plain-http
+          done
+          CHART_DIR=$copy/chart CONSOLE_REPO=https://console.invalid/kubetower \
+            refused "$not_auth" "kubetower-$version" "$local" --plain-http
+          # And an appVersion that is not a semantic version, even where the
+          # tag could not have been read: a letter O for a zero.
+          cp -r "$copy/chart" "$copy/typo"
+          sed -i 's/^appVersion: .*/appVersion: "0.1.O"/' "$copy/typo/Chart.yaml"
+          CHART_DIR=$copy/typo CONSOLE_REPO=http://127.0.0.1:8765/auth/console \
+            refused "which is not a semantic version" "kubetower-$version" "$local" --plain-http
+      # The console's repository can be private while this one is public, and
+      # this repository holds no credential for it, so a release is answered
+      # "could not read Username". That answer, and only that one, is warned
+      # about and published, never reported as tied; test/git-http-fixture.py
+      # gives it under /auth/ (401). And the readable case still ties:
+      # a tag that is the derivedFrom commit publishes, and says it was checked.
+      # Each publishes the chart copy to a path of the job's registry of its
+      # own, so the real chart's push below is not "already published".
+      - name: a console that wants a credential warns and publishes, and a matching tag publishes as tied
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          copy=$RUNNER_TEMP/tie-published
+          mkdir -p "$copy"
+          cp -r charts/kubetower "$copy/chart"
+          sed -i 's/^appVersion: .*/appVersion: "9.9.9"/' "$copy/chart/Chart.yaml"
+          python3 test/git-http-fixture.py 8766 & fixture=$!
+          trap 'kill $fixture' EXIT
+          for _ in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done
+          curl -s -o /dev/null http://127.0.0.1:8766/ || { echo "the git fixture did not start"; exit 1; }
+          # Lines are shown behind "| " so that the script's own annotation is
+          # read here, as text, rather than raised again by this job.
+          publishes() {
+            want="$1"; shift
+            if ! out=$(GITHUB_ACTIONS=true bash .github/scripts/publish-chart.sh "$@" 2>&1); then
+              printf '%s\n' "$out" | sed 's/^/| /'; echo "NOT PUBLISHED: $*"; exit 1
+            fi
+            printf '%s\n' "$out" | sed 's/^/| /'
+            printf '%s\n' "$out" | grep -q '^published kubetower' || { echo "no publish line"; exit 1; }
+            printf '%s\n' "$out" | grep -qF -- "$want" || { echo "published without saying: $want"; exit 1; }
+          }
+          CHART_DIR=$copy/chart CONSOLE_REPO=http://127.0.0.1:8766/auth/console \
+            publishes "the role is NOT tied to the console: its tag 9.9.9 could not be read" \
+            "kubetower-$version" oci://localhost:5000/unreadable --plain-http
+          printf '%s\n' "$out" | grep -q 'could not read Username' || { echo "the warning path was not the missing-credential answer"; exit 1; }
+          printf '%s\n' "$out" | grep -q '^::warning title=Role not tied' || { echo "no annotation for the unreadable tag"; exit 1; }
+          printf '%s\n' "$out" | grep -qF "role is tied to the console:" && { echo "an unreadable tag was reported as tied"; exit 1; }
+          git init -q "$copy/console"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "a console release"
+          git -C "$copy/console" -c user.name=ci -c user.email=ci@example.invalid tag -a 9.9.9 -m 9.9.9
+          head=$(git -C "$copy/console" rev-parse HEAD)
+          sed -i "s/^\([[:space:]]*commit:\).*/\1 $head/" "$copy/chart/console-needs.yaml"
+          CHART_DIR=$copy/chart CONSOLE_REPO=$copy/console \
+            publishes "the role is tied to the console: its tag 9.9.9 is $head" \
+            "kubetower-$version" oci://localhost:5000/tied --plain-http
+          printf '%s\n' "$out" | grep -q '::warning' && { echo "a matching tag raised a warning"; exit 1; }
+          echo "no credential: warned and published; matching annotated tag: published as tied"
+      - name: package, push to the job's registry, pull back, compare and render
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder
+      # A published version is never replaced: the same publish again must be
+      # refused, and the registry must still hold the first.
+      - name: publishing the same version again is refused
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          if out=$(bash .github/scripts/publish-chart.sh "kubetower-$version" oci://localhost:5000/charts --plain-http --allow-placeholder 2>&1); then
+            echo "NOT REFUSED: a second publish of $version"; printf '%s\n' "$out"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF "is already published" || { echo "refused without saying why: $out"; exit 1; }
+          echo "a second publish of $version is refused"
+      # As release.yml reads it after logging out: with no login at all. The
+      # job's registry has no authentication, so here this proves the script,
+      # not a package's visibility.
+      - name: the chart reads back with no login
+        run: |
+          set -o pipefail
+          version=$(sed -n 's/^version:[[:space:]]*//p' charts/kubetower/Chart.yaml)
+          bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower "$version" --plain-http
+          if bash .github/scripts/read-chart-anonymously.sh oci://localhost:5000/charts/kubetower 0.0.0-never-pushed --plain-http; then
+            echo "NOT REFUSED: a version nobody pushed read back"; exit 1
+          fi
+          echo "a version nobody pushed is refused"
+
+  persistence:
+    name: the console is told whether its state survives, and a drawn password needs it
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+      - run: pip install pyyaml
+      # --self-test first, for the rbac job's reason: it renders the chart with
+      # the refusal removed and fails unless exactly the refusal cases fail.
+      - run: python test/persistence-check.py --self-test
+
+  public:
+    name: nothing here cites what a stranger cannot open
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      # The whole history, because the commit messages are scanned too.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      # This repository is public. Its instructions say to link the console
+      # freely and anything private never, and that was broken twice in its first
+      # two days - once by a copied template naming private repositories, once by
+      # comments citing a decision by its identifier in a private register. Both
+      # were caught by somebody reading. A rule only a reader enforces is a
+      # comment, so it is a job.
+      #
+      # First the proof that it can fail: a planted file, file name, commit
+      # message and description must each be refused, and a squash that only
+      # closes an issue must not be.
+      - name: the check refuses what it is meant to refuse
+        run: bash test/public-check.sh --self-test
+      # Every tracked file, this workflow and the script included. Nothing is
+      # excluded: the script holds no list of names.
+      - name: no private reference in the tree
+        run: bash test/public-check.sh tree
+      # Where every job runs: RUNS_ON, or ubuntu-latest when it is unset, and
+      # always ubuntu-latest for a fork's pull request, so a stranger's code
+      # never reaches a self-hosted runner (test/runs-on-check.py says why).
+      - run: pip install pyyaml
+      - name: the runner rule refuses what it is meant to refuse
+        run: python3 test/runs-on-check.py --self-test
+      - name: every job runs where RUNS_ON says, and a fork on a hosted runner
+        run: python3 test/runs-on-check.py
+      # The pull request's title and description. This repository squash-merges
+      # with the title as the subject and the description as the body, so the
+      # description is what lands on `main` - the most public text of the
+      # change, and the one a reviewer reads least carefully. A line that only
+      # closes an issue is the one place a private issue may be named.
+      #
+      # Through `env:` and never `${{ }}` inside `run:`: a description is
+      # somebody else's text, and interpolated into a script it is code.
+      # The workflow runs again on `edited`, because a description changed
+      # after a green check is otherwise never read.
+      - name: no private reference in the pull request's title or description
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          rc=0
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/public-check.sh message "pull request description" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::the pull request's title or description names something private, and a squash merge would put it on main. Edit it; the check runs again on the edit"
+          fi
+          exit $rc
+      # And every commit message: of the pull request, or on `main` the squash
+      # that landed - whose body is the description above, so a `Closes` line
+      # passes here for the same reason.
+      - name: no private reference in a commit message
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            range="origin/$BASE..HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            range="$BEFORE..HEAD"
+          else
+            echo "no earlier commit to compare against on this push - nothing to scan"
+            exit 0
+          fi
+          # The step's shell stops at the first failure, so the status is
+          # caught rather than read afterwards.
+          rc=0
+          bash test/public-check.sh commits "$range" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::a commit message above names something private. On a pull request, reword it and force-push the branch: squashing does not hide it, since the squash message here is the description rather than the commits, but the pull request keeps its commits readable. On main it is already published, and only a follow-up can say so"
+          fi
+          exit $rc

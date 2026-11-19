@@ -1,0 +1,30 @@
+{{- /*
+Valkey's configuration, everything but the password. A file of its own so
+that the StatefulSet's checksum covers the whole of it: any line changed here
+restarts Valkey, rather than only the one value the checksum used to name.
+*/ -}}
+{{- if include "kubetower.several" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+data:
+  # Everything but the password, which the init container writes beside this
+  # from the Secret - never onto a command line, where the process list would
+  # show it.
+  valkey.conf: |
+    bind * -::*
+    port {{ int .Values.valkey.service.port }}
+    protected-mode yes
+    save ""
+    appendonly no
+    dir /data
+    # A bound on memory, and what goes first when it is reached: volatile-ttl
+    # evicts the key nearest its expiry, so under pressure the short-lived
+    # sign-in markers and plans go long before a session.
+    maxmemory {{ .Values.valkey.maxmemory }}
+    maxmemory-policy volatile-ttl
+{{- end }}
