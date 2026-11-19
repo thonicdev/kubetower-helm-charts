@@ -1,0 +1,299 @@
+KubeTower is installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}, from the image
+{{ include "kubetower.image" . }}.
+
+WHAT YOU JUST DEPLOYED
+----------------------
+The console's {{ if .Values.serverProfile }}server profile (no local shell, node shell or assistant;
+it reads this pod's own ServiceAccount){{ else }}desktop profile, local shell included,{{ end }}
+running in a pod. Whichever profile runs, the console makes every request as
+this pod's ServiceAccount, so the cluster's audit log names the ServiceAccount
+and not the person.
+{{- if .Values.auth.oidc.issuer }} With single sign-on it first asks the
+cluster whether the person signed in may do each thing, refuses when they
+may not, and its own log names them.
+{{- else }} With the shared password, whoever holds it gets
+everything this pod's role grants, and nothing records who they were.
+{{- end }}
+{{- if hasPrefix "ghcr.io/thonicdev/" .Values.image.repository }}
+
+THE IMAGE IS PRIVATE while thonicdev/kubetower is: a package on ghcr.io inherits
+its repository's access. If the pod stays in ImagePullBackOff, the nodes need a
+token with read:packages from somebody who can read that repository:
+
+  kubectl --context <your-context> -n {{ .Release.Namespace }} create secret docker-registry ghcr-pull \
+    --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+
+and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
+{{- if .Values.image.pullSecrets }} This release names
+{{ len .Values.image.pullSecrets }} pull Secret(s) already.
+{{- end }}
+{{- end }}
+
+{{- if and (include "kubetower.extrasInExtraEnv" .) .Values.extras }}
+
+extras is IGNORED for the pages: extraEnv sets KT_EXTRAS as well, and the
+extraEnv entry wins. The role still grants what the extras named in `extras`
+read, and nothing for a page only KT_EXTRAS turns on. Keep one of them: the
+`extras` value.
+{{- end }}
+{{- /* replicaCount alone: the chart renders no autoscaler, so it is the one
+     number of consoles there is. */}}
+{{- if and .Values.extras (include "kubetower.several" .) }}
+
+THE EXTRA PAGES CANNOT BE TURNED ON PER CLUSTER with {{ .Values.replicaCount }} replicas. Turning
+one on in Settings > Extra needs a single replica and its state volume: with
+several, each console's state is its own, so the console withholds the write,
+the tab is a view, and only the chart's values decide. Run replicaCount=1 with
+persistence to let people holding `use` on extras.kubetower.dev/<key> do it.
+{{- end }}
+
+{{- if and (include "kubetower.extraSettingsInExtraEnv" .) .Values.extraSettings }}
+
+extraSettings is IGNORED: extraEnv sets KT_EXTRA_SETTINGS as well, and the
+extraEnv entry wins. Remove one of them.
+{{- end }}
+
+{{- if not (include "kubetower.extrasInExtraEnv" .) }}
+{{- $unnamed := list }}
+{{- range $page, $_ := .Values.extraSettings | default dict }}
+{{- if not (has $page ($.Values.extras | default list)) }}{{ $unnamed = append $unnamed $page }}{{ end }}
+{{- end }}
+{{- if $unnamed }}
+
+extraSettings names {{ join ", " $unnamed }}, which extras does not: that page
+cannot be turned on, so its settings have no effect. Add it to extras, or remove
+it from extraSettings.
+{{- end }}
+{{- end }}
+
+1. REACH IT
+{{- /* The local port is the one single sign-on sends the browser back to, when
+     the redirect is a loopback address: forwarding any other port lands the
+     browser on a closed one after it signs in. */}}
+{{- $local := "5823" }}
+{{- with .Values.auth.oidc.redirectURL }}
+{{- $loopback := regexFind "^http://(127[.]0[.]0[.]1|localhost):[0-9]+/" . }}
+{{- if $loopback }}
+{{- $local = regexReplaceAll "^http://[^:]+:([0-9]+)/$" $loopback "${1}" }}
+{{- end }}
+{{- end }}
+
+   kubectl --context <your-context> -n {{ .Release.Namespace }} port-forward svc/{{ include "kubetower.fullname" . }} {{ $local }}:{{ .Values.service.port }}
+
+   Then open http://127.0.0.1:{{ $local }}
+{{- if .Values.ingress.enabled }}
+
+   An Ingress is enabled on:
+{{- range .Values.ingress.hosts }}
+     http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- if and .Values.auth.oidc.issuer (not .Values.auth.localAccount) }}
+   Everyone who can reach that host and whom the provider will issue a token
+   for client {{ .Values.auth.oidc.clientID }} can sign in - there is no password to hold them back.
+{{- else if .Values.auth.oidc.issuer }}
+   Everyone who can reach that host can sign in through the provider, or with
+   the one shared password below.
+{{- else }}
+   Everyone who can reach that host needs only the one password below.
+{{- end }}
+{{- if and (or (not .Values.auth.oidc.issuer) .Values.auth.localAccount) (not (include "kubetower.trustedProxies" .)) (not (include "kubetower.trustedProxiesInExtraEnv" .)) }}
+
+   Password sign-in is on behind it, and auth.trustedProxies is empty: every
+   attempt counts as coming from the ingress controller, so none is limited
+   per client and failures are logged against the controller. Set
+   auth.trustedProxies to the controller's own addresses (see values.yaml
+   for what is safe to name).
+{{- end }}
+{{- end }}
+{{- if and (include "kubetower.trustedProxiesInExtraEnv" .) (include "kubetower.trustedProxiesParsed" .) }}
+
+   auth.trustedProxies is IGNORED: extraEnv sets KT_TRUSTED_PROXIES as well,
+   and the extraEnv entry wins. Remove one of them.
+{{- end }}
+
+2. SIGN IN
+{{- if .Values.auth.oidc.issuer }}
+
+   With single sign-on, through {{ .Values.auth.oidc.issuer }}: the sign-in page
+   offers "Sign in with SSO". The provider must list this redirect URI for
+   client {{ .Values.auth.oidc.clientID }}, byte for byte:
+
+     {{ .Values.auth.oidc.redirectURL }}
+
+   If the provider is unreachable the console still starts, and the sign-in
+   page says the provider is unavailable and why.
+
+   Everybody the provider will issue a token to for client {{ .Values.auth.oidc.clientID }}
+   is admitted, and gets whatever the cluster's RBAC grants them, up to this
+   pod's own role - the console has no list of who may sign in. Restrict who
+   may use that client at the provider.
+{{- $claim := .Values.auth.oidc.usernameClaim | default "email" }}
+{{- $prefix := .Values.auth.oidc.usernamePrefix }}
+{{- if eq $prefix "-" }}{{ $prefix = "" }}
+{{- else if and (eq $prefix "") (ne $claim "email") }}{{ $prefix = printf "%s#" .Values.auth.oidc.issuer }}
+{{- end }}
+
+   A RoleBinding names a person as the console checks them:
+{{- if $prefix }}
+   "{{ $prefix }}" followed by their {{ $claim }} claim, as in {{ $prefix }}<{{ $claim }}>.
+   A RoleBinding written for the bare claim matches nobody.
+{{- else }}
+   their {{ $claim }} claim, with no prefix.
+{{- end }}
+   auth.oidc.usernamePrefix is {{ if .Values.auth.oidc.usernamePrefix }}"{{ .Values.auth.oidc.usernamePrefix }}"{{ else }}unset, which is kube-apiserver's default{{ end }}.
+   The console's start-up log names the same string.
+{{- if not .Values.auth.localAccount }}
+
+   There is NO shared password (auth.localAccount is false): its routes are
+   not registered and none is drawn. If the provider never comes back, the way
+   in is `helm upgrade ... --set auth.localAccount=true`.
+{{- end }}
+{{- end }}
+{{- if or (not .Values.auth.oidc.issuer) .Values.auth.localAccount }}
+
+   User: {{ .Values.auth.user }}
+{{ if .Values.auth.existingSecret }}
+   Password: whatever KT_PASSWORD_HASH in Secret {{ .Values.auth.existingSecret }} is the hash of.
+
+   That Secret should also carry KT_SESSION_SECRET, at least 32 characters.
+   Without it the console draws a new session key at every start, so every
+   restart signs everybody out. The chart cannot see inside it to check.
+{{- else if .Values.auth.passwordHash }}
+   Password: whatever you hashed into auth.passwordHash.
+{{- else }}
+   No password was configured, so the chart drew one. The pod holds only its
+   hash; the password is in a Secret of its own:
+
+     kubectl --context <your-context> -n {{ .Release.Namespace }} get secret {{ include "kubetower.initialPasswordName" . }} -o jsonpath='{.data.password}' | base64 -d
+
+   Once read, delete that Secret: upgrades keep the hash and do not draw again.
+   A tool that renders without a cluster (helm template, Argo CD) draws a new
+   one at every render: set auth.passwordHash for those.
+{{- end }}
+{{- if .Values.auth.oidc.issuer }}
+
+   auth.localAccount is ON: this password bypasses the identity provider, and
+   the console's write log records its user as `via=password` - nobody in
+   particular.
+{{- end }}
+{{- end }}
+
+3. WHAT WORKS AND WHAT DOES NOT, WITH THESE VALUES
+
+   Who can sign in ........... {{ if .Values.auth.oidc.issuer }}anybody the provider issues a token to for this client{{ if .Values.auth.localAccount }}, and anybody with the password{{ end }} - restrict it at the provider{{ else }}anybody with the password{{ end }}
+   Asking who may do what .... {{ if .Values.rbac.create }}yes, always - so the console can check each person's rights with the cluster before acting{{ else }}NOT GRANTED HERE - rbac.create is false: bind create on subjectaccessreviews yourself, or every single sign-on write is refused{{ end }}
+   Reading resources ......... {{ if .Values.rbac.read }}yes{{ else }}NO - rbac.read is false, the lists will be empty{{ end }}
+   Secrets and Helm releases . {{ if and .Values.rbac.read .Values.rbac.readSecrets }}yes - every Secret, this release's own session key included{{ else }}NO - those two pages will report a denial{{ end }}
+   Custom resources .......... {{ if .Values.rbac.customResources }}yes (wildcard read is granted){{ else }}NO - rbac.customResources is false{{ end }}
+   CPU/memory columns ........ {{ if .Values.rbac.metrics }}where metrics-server is installed{{ else }}NO - rbac.metrics is false{{ end }}
+   Editing and deleting ...... {{ if .Values.rbac.write }}YES - treat it as cluster-admin, for everyone who signs in{{ else }}no - rbac.write is false{{ end }}
+   Cordon, drain, evict ...... {{ if .Values.rbac.write }}YES - under rbac.write{{ else }}no - rbac.write is false{{ end }}
+   Deleting any kind ......... {{ if .Values.rbac.deleteAll }}YES - delete on every kind: treat it as cluster-admin for deletion{{ else }}no - rbac.deleteAll is false{{ end }}
+   Pod shells, port-forwards . {{ if .Values.rbac.exec }}YES - a shell in any pod, for everyone who signs in{{ else }}no - rbac.exec is false{{ end }}
+   Prometheus graphs ......... {{ if .Values.rbac.prometheusProxy }}through the service proxy - which reaches every Service's HTTP GETs{{ else if .Values.rbac.exec }}through a port-forward to the Prometheus pod (rbac.prometheusProxy is false){{ else }}NO - rbac.prometheusProxy and rbac.exec are both false{{ end }}
+   Node stats via kubelet .... {{ if .Values.rbac.nodeProxy }}YES - and the kubelet API with it: treat it as a shell on every node{{ else }}no - rbac.nodeProxy is false{{ end }}
+   Event archive, settings ... {{ if .Values.persistence.enabled }}kept in the PersistentVolumeClaim{{ else }}NO - persistence is off, so the console offers neither{{ end }}
+
+{{- if include "kubetower.several" . }}
+
+   SEVERAL REPLICAS ({{ .Values.replicaCount }}): the consoles share their sessions,
+   confirmation plans and a short-lived marker per completed sign-in through Valkey
+   ({{ include "kubetower.valkeyName" . }}). What only one pod could hold is not offered:
+   the rail, column and density preferences cannot be changed, the settings
+   are read-only, port-forwards are off, and there is no archive.
+
+   {{ if .Values.topologySpreadConstraints }}The consoles follow your topologySpreadConstraints{{ else }}The consoles are spread across nodes{{ end }}{{ if .Values.podDisruptionBudget.enabled }} and a PodDisruptionBudget lets
+   them go {{ .Values.podDisruptionBudget.maxUnavailable }} at a time{{ else }} (podDisruptionBudget is off, so a drain
+   may take them all at once){{ end }}. VALKEY IS ONE POD, with nothing on
+   disk: draining its node, upgrading it or losing it signs everybody out. It
+   has no PodDisruptionBudget, because one on a single pod blocks the drain.
+{{- if not .Values.valkey.existingSecret }}
+
+   Its password was drawn by this chart and is read back on every upgrade. A
+   `helm template` or a GitOps tool rendering without a cluster cannot read it
+   back and draws a new one each time, and so does the session key: every pod
+   then restarts on each sync and everybody is signed out. Use
+   valkey.existingSecret there, and auth.sessionSecret or auth.existingSecret.
+{{- end }}
+{{- end }}
+
+4. CHECK IT CAME UP
+
+   kubectl --context <your-context> -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- if include "kubetower.several" . }}
+   kubectl --context <your-context> -n {{ .Release.Namespace }} get statefulset {{ include "kubetower.valkeyName" . }}
+{{- end }}
+   kubectl --context <your-context> -n {{ .Release.Namespace }} logs deploy/{{ include "kubetower.fullname" . }}
+
+   Readiness is {{ .Values.readinessProbe.httpGet.path | default "set in your values" }}.{{ if eq (toString .Values.readinessProbe.httpGet.path) "/readyz" }} It is the console's own judgement: a
+   replica goes unready when its clusters stop answering (here, the API server)
+   or, in console versions that check it, when its audit log can no longer be
+   written - and leaves the Service while that lasts.{{ end }}
+
+   A replica whose log says the audit log stopped writing refuses every act
+   and stays not ready on /readyz until it is restarted: it does not recover
+   by itself. Fix the cause (a full disk, or a stdout or log pipe nothing
+   drains), then restart every replica:
+
+     kubectl --context <your-context> -n {{ .Release.Namespace }} rollout restart deployment/{{ include "kubetower.fullname" . }}
+
+   or only the affected one:
+
+     kubectl --context <your-context> -n {{ .Release.Namespace }} delete pod <pod>
+
+5. BEFORE YOU SHARE THE URL WITH ANYBODY
+
+   Do not. What makes this single-user is open work:
+
+     * the port-forward cap is per process - forwards are shared by everybody at once
+{{- if .Values.auth.oidc.issuer }}
+     * people sign in as themselves, each with a session of their own, and the
+       cluster is asked what each may do - but every request is still this
+       pod's ServiceAccount's, so the cluster's audit log cannot tell them apart
+{{- else }}
+     * the session is stateless - revoking one person signs out all of them
+{{- end }}
+{{- if .Values.serverProfile }}
+     * (closed here) the local shell, the node shell and the assistant have no
+       route at all under serverProfile
+{{- else }}
+     * the local shell and the Claude control are in this binary and their
+       routes are registered - set serverProfile=true to remove them
+     * the Claude control runs on one subscription, as one identity
+{{- end }}
+{{- if .Values.rbac.exec }}
+
+   rbac.exec is ON in this release. Anybody who signs in has a shell in any
+   pod in the cluster, holding this pod's ServiceAccount.
+{{- end }}
+{{- if .Values.rbac.write }}
+
+   rbac.write is ON in this release. It lets the console create pods,
+   Secrets and ServiceAccounts in every namespace, and a pod can be started as
+   any ServiceAccount in its namespace - so anybody who signs in can act with
+   the rights of any ServiceAccount in the cluster. On most clusters that
+   reaches cluster-admin.
+{{- end }}
+{{- if .Values.rbac.deleteAll }}
+
+   rbac.deleteAll is ON in this release. Anybody who signs in may delete
+   anything in the cluster - every Namespace with what it holds, every CRD
+   with its objects, the RBAC itself, this release - up to their own
+   RoleBindings with single sign-on, and all of it with the shared password.
+{{- end }}
+{{- if .Values.rbac.nodeProxy }}
+
+   rbac.nodeProxy is ON in this release. It reaches every kubelet's API, which
+   Kubernetes' own guidance says allows running commands in the pods on each
+   node. Anybody who signs in has that.
+{{- end }}
+{{- if and .Values.rbac.read .Values.rbac.readSecrets }}
+
+   Reading Secrets includes this release's own. Anybody who signs in can read
+   the session key from the Secrets page and mint a session that outlives a
+   password change; only rotating the key ends it.
+{{- if .Values.auth.oidc.issuer }} With single sign-on
+   that session can carry any name, so who the console says did a thing is
+   only as trustworthy as that Secret is unread.
+{{- end }}
+{{- end }}

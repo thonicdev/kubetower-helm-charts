@@ -1,0 +1,54 @@
+{{- /*
+Renders nothing. It refuses a single sign-on prefix in Kubernetes' own
+namespace of users and groups, `system:` - system:masters,
+system:serviceaccount:..., system:nodes.
+
+The console refuses the same values at start-up (internal/auth/oidc.go in
+thonicdev/kubetower: `reserved`, and the checks on GroupsPrefix and
+NamePrefix()), because with such a prefix every person or group from the
+identity provider would arrive as one of Kubernetes' own. That refusal is the
+authoritative one; this one exists so that `helm install` fails, naming the
+value, instead of NOTES presenting a configuration that crash-loops.
+
+It mirrors the console's rule exactly, so that the chart refuses what the
+console refuses and nothing else:
+
+  - compared trimmed and case-insensitively, as the console compares;
+  - the user-name prefix as it will be applied: `-` is no prefix at all, and
+    unset is the issuer followed by `#` - unless the claim is `email`, which
+    stays bare. Only an issuer starting with `system:` could make that one
+    reserved, and it is still refused rather than left to the first sign-in;
+  - the groups prefix as it is;
+  - only when an issuer is set, since neither value is read without one.
+
+A template `fail` rather than a schema `not`/`pattern`: the schema's message,
+"Must not validate the schema (not)", does not say why.
+*/ -}}
+{{- $oidc := .Values.auth.oidc -}}
+{{- $issuer := trim (toString ($oidc.issuer | default "")) -}}
+{{- if $issuer -}}
+{{- $reserved := "system:" -}}
+{{- $groups := toString ($oidc.groupsPrefix | default "") -}}
+{{- if hasPrefix $reserved (lower (trim $groups)) -}}
+{{- fail (printf "auth.oidc.groupsPrefix is %q, which starts with %q: every group the provider sends would become one of Kubernetes' own groups (system:masters is cluster-admin). The console refuses it at start-up; use a prefix of your own, such as \"oidc:\"." $groups $reserved) -}}
+{{- end -}}
+{{- $set := toString ($oidc.usernamePrefix | default "") -}}
+{{- $applied := $set -}}
+{{- if eq $set "-" -}}
+{{- $applied = "" -}}
+{{- else if eq $set "" -}}
+{{- $claim := trim (toString ($oidc.usernameClaim | default "")) | default "email" -}}
+{{- if eq $claim "email" -}}
+{{- $applied = "" -}}
+{{- else -}}
+{{- $applied = printf "%s#" $issuer -}}
+{{- end -}}
+{{- end -}}
+{{- if hasPrefix $reserved (lower (trim $applied)) -}}
+{{- if eq $set "" -}}
+{{- fail (printf "auth.oidc.usernamePrefix is unset, so the console would prefix every name with the issuer and '#', %q, which starts with %q: every person the provider signs in would become one of Kubernetes' own users. The console refuses it at start-up; set auth.oidc.usernamePrefix to a prefix of your own, or to \"-\" for none." $applied $reserved) -}}
+{{- else -}}
+{{- fail (printf "auth.oidc.usernamePrefix is %q, which starts with %q: every person the provider signs in would become one of Kubernetes' own users. The console refuses it at start-up; use a prefix of your own, such as \"oidc:\", or \"-\" for none." $set $reserved) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

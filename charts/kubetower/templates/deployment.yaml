@@ -1,0 +1,398 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Recreate, not RollingUpdate, for one console. The state directory is
+  # ReadWriteOnce, so a second pod cannot mount it while the first holds it - a
+  # rolling update would wedge with the new pod Pending on the volume.
+  #
+  # Several consoles have no volume to wait for (replicas-refused.yaml sees to
+  # that) and share their sessions through Valkey, so they roll: a pod replaced
+  # while the others serve is an upgrade nobody signed in notices.
+  strategy:
+    {{- if include "kubetower.several" . }}
+    type: RollingUpdate
+    {{- else }}
+    type: Recreate
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "kubetower.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart the pod when the kubeconfig or the credentials change. The
+        # process reads both once, at start, so a changed Secret with an
+        # unchanged Deployment would leave the old password and the old
+        # session key running - and rotating the key would revoke nothing.
+        {{- if include "kubetower.kubeconfigGenerated" . }}
+        checksum/kubeconfig: {{ include (print $.Template.BasePath "/configmap-kubeconfig.yaml") . | sha256sum }}
+        {{- end }}
+        # Over the Secret this chart writes. A Secret named by
+        # auth.existingSecret is not the chart's to read, so its name is
+        # hashed instead: changing its contents needs a
+        # `kubectl rollout restart` of this Deployment.
+        {{- if include "kubetower.several" . }}
+        # Several consoles read the Valkey password too.
+        checksum/valkey-secret: {{ include "kubetower.valkeySecretChecksum" . }}
+        {{- end }}
+        {{- if or (include "kubetower.extras" .) (include "kubetower.extraSettings" .) }}
+        # And when the extra pages or their settings change: KT_EXTRAS and
+        # KT_EXTRA_SETTINGS are read once, at start, from the ConfigMap below,
+        # so a new list under an unchanged pod template would change nothing.
+        checksum/extras: {{ include (print $.Template.BasePath "/configmap-extras.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.auth.existingSecret }}
+        checksum/secret: {{ .Values.auth.existingSecret | sha256sum }}
+        {{- else }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kubetower.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "kubetower.serviceAccountName" . }}
+      # The token comes from the projected volume below, with an hour on it,
+      # rather than from the legacy Secret that never expires.
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Long enough for the preStop pause and the console's own shutdown -
+      # templates/_helpers.tpl refuses a value that is not.
+      terminationGracePeriodSeconds: {{ include "kubetower.terminationGracePeriod" . }}
+      {{- with include "kubetower.topologySpread" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      containers:
+        - name: kubetower
+          image: {{ include "kubetower.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # --unattended: no dialog, there is no screen here. The console draws
+          # no password either: the release's Secret always carries a hash
+          # when the password route is offered (auth.passwordHash, or the one
+          # the chart draws), so nothing credential-like reaches the log.
+          # ci.yml runs the image the same way.
+          args:
+            - --unattended
+            {{- if .Values.serverProfile }}
+            # The server profile. It does not configure the console, it
+            # makes it smaller: the local shell, the node shell and the
+            # assistant are not registered at all, so each address answers
+            # exactly what a path that never existed answers - 404 under /api/,
+            # the single-page shell under /kt-api/ - rather than a handler that
+            # refuses. Not one status: /kt-api/ is not under the API mount.
+            #
+            # **On by default.** Set false, this chart deploys the single-user
+            # console in a pod, and the console offers a shell holding this
+            # pod's ServiceAccount.
+            - --incluster
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 5823
+              protocol: TCP
+          env:
+            # The image already sets KT_LISTEN=:5823 and
+            # KT_STATE_DIR=/var/lib/kubetower. Both are repeated here on
+            # purpose: an operator reading this Deployment should see where the
+            # process listens and where it writes without opening the
+            # Dockerfile.
+            - name: KT_LISTEN
+              value: ":5823"
+            - name: KT_STATE_DIR
+              value: /var/lib/kubetower
+            # Whether that directory survives a restart. The console cannot
+            # tell an emptyDir from a volume - both answer every write - so it
+            # is told, on every install and both ways. False, and it offers no
+            # archive and no setting kept there, rather than a retention it
+            # will forget at the next start.
+            - name: KT_STATE_PERSISTENT
+              value: {{ .Values.persistence.enabled | quote }}
+            {{- if include "kubetower.kubeconfigGenerated" . }}
+            - name: KUBECONFIG
+              value: /etc/kubetower/kubeconfig/config
+            {{- else if .Values.serverProfile }}
+            # No KUBECONFIG: under --incluster the console reads this pod's
+            # own ServiceAccount, the way client-go's InClusterConfig does,
+            # and does not read KUBECONFIG at all. So no kubeconfig is
+            # rendered for it either.
+            {{- else }}
+            # kubeconfig.generate is false, so KUBECONFIG is not set here: it
+            # is yours to set through extraEnv, beside the extraVolumes that
+            # mount the file it names. Setting it from here would point the
+            # process at a path nothing mounts, and the console would start,
+            # answer /healthz, and report no clusters - which reads as a
+            # cluster problem rather than a missing mount.
+            {{- end }}
+            - name: KT_IN_CONTAINER
+              value: "1"
+            - name: KT_USER
+              value: {{ .Values.auth.user | quote }}
+            - name: KT_SESSION_TTL
+              value: {{ .Values.auth.sessionTTL | quote }}
+            - name: KT_SESSION_MAX
+              value: {{ .Values.auth.sessionMax | quote }}
+            {{- with .Values.auth.oidc }}
+            {{- if .issuer }}
+            # Single sign-on. The variables are only set when an issuer is,
+            # so an install without one renders exactly what it did before.
+            - name: KT_OIDC_ISSUER
+              value: {{ .issuer | quote }}
+            {{- if .discoveryURL }}
+            - name: KT_OIDC_DISCOVERY_URL
+              value: {{ .discoveryURL | quote }}
+            {{- end }}
+            - name: KT_OIDC_CLIENT_ID
+              value: {{ required "auth.oidc.clientID is required when auth.oidc.issuer is set" .clientID | quote }}
+            - name: KT_OIDC_REDIRECT_URL
+              value: {{ required "auth.oidc.redirectURL is required when auth.oidc.issuer is set: the console's callback as the browser reaches it, ending in /api/auth/oidc/callback" .redirectURL | quote }}
+            {{- if .clientSecret.existingSecret }}
+            - name: KT_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .clientSecret.existingSecret | quote }}
+                  key: {{ .clientSecret.key | quote }}
+            {{- end }}
+            {{- if .scopes }}
+            - name: KT_OIDC_SCOPES
+              value: {{ .scopes | quote }}
+            {{- end }}
+            {{- if .usernameClaim }}
+            - name: KT_OIDC_USERNAME_CLAIM
+              value: {{ .usernameClaim | quote }}
+            {{- end }}
+            {{- if .usernamePrefix }}
+            # Passed as it is: `-` is the console's own spelling of "no
+            # prefix", and unset leaves the console its default.
+            - name: KT_OIDC_USERNAME_PREFIX
+              value: {{ .usernamePrefix | quote }}
+            {{- end }}
+            {{- if .groupsClaim }}
+            - name: KT_OIDC_GROUPS_CLAIM
+              value: {{ .groupsClaim | quote }}
+            {{- end }}
+            {{- if .groupsPrefix }}
+            - name: KT_OIDC_GROUPS_PREFIX
+              value: {{ .groupsPrefix | quote }}
+            {{- end }}
+            {{- if .sessionMax }}
+            - name: KT_OIDC_SESSION_MAX
+              value: {{ .sessionMax | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if and .Values.auth.oidc.issuer .Values.auth.localAccount }}
+            # The escape hatch, typed out: the shared password stays.
+            - name: KT_AUTH_LOCAL_ACCOUNT
+              value: "true"
+            {{- end }}
+            {{- with include "kubetower.trustedProxies" . }}
+            # Whose X-Forwarded-For password sign-in believes: the ingress
+            # controller's addresses (auth.trustedProxies). Unset, every
+            # attempt behind an ingress counts as coming from the ingress.
+            - name: KT_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
+            - name: KT_FORWARD_PORTS
+              value: {{ .Values.forwardPorts | quote }}
+            {{- if .Values.readonlyClusters }}
+            - name: KT_READONLY_CLUSTERS
+              value: {{ .Values.readonlyClusters | quote }}
+            {{- end }}
+            {{- if .Values.diagnostics }}
+            - name: KT_DIAG
+              value: {{ .Values.diagnostics | quote }}
+            {{- end }}
+            - name: CLAUDE_CONFIG_DIR
+              value: /home/kubetower/.claude
+            - name: KT_CLAUDE_READONLY
+              value: {{ .Values.claude.readOnly | quote }}
+            {{- if .Values.claude.permissionMode }}
+            - name: KT_CLAUDE_PERMISSION_MODE
+              value: {{ .Values.claude.permissionMode | quote }}
+            {{- end }}
+            {{- if include "kubetower.extras" . }}
+            # The extra pages this console turns on (`extras`), from the
+            # ConfigMap the chart writes for them. Absent when extras names
+            # none, or when extraEnv sets KT_EXTRAS itself, which then wins.
+            - name: KT_EXTRAS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubetower.fullname" . }}-extras
+                  key: KT_EXTRAS
+            {{- end }}
+            {{- if include "kubetower.extraSettings" . }}
+            # The extra pages' own settings (`extraSettings`), from the same
+            # ConfigMap. Absent when extraSettings names none, or when
+            # extraEnv sets KT_EXTRA_SETTINGS itself, which then wins.
+            - name: KT_EXTRA_SETTINGS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubetower.fullname" . }}-extras
+                  key: KT_EXTRA_SETTINGS
+            {{- end }}
+            {{- include "kubetower.valkeyEnv" . | nindent 12 }}
+            {{- with include "kubetower.goMemLimit" . }}
+            # The Go runtime's soft memory limit, a share of the container's
+            # (goMemLimitPercent), so the garbage collector works harder as
+            # the heap nears the limit instead of the kernel killing the
+            # process at it. In bytes; absent when there is no memory limit or
+            # when extraEnv sets GOMEMLIMIT itself.
+            - name: GOMEMLIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            # KT_PASSWORD_HASH (when there is one) and KT_SESSION_SECRET.
+            # envFrom rather than two secretKeyRefs, so that an absent
+            # KT_PASSWORD_HASH is simply an absent variable instead of a pod
+            # that will not start.
+            - secretRef:
+                name: {{ include "kubetower.secretName" . }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- if gt (int .Values.preStopSleepSeconds) 0 }}
+          # A pause before SIGTERM, so that the endpoint's removal reaches the
+          # Service and the ingress before the listener closes, rather than
+          # racing it: requests routed in that window still find a server.
+          # `sleep` is the image's own (Alpine).
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", {{ .Values.preStopSleepSeconds | int | toString | quote }}]
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/kubetower
+            {{- if include "kubetower.kubeconfigGenerated" . }}
+            - name: kubeconfig
+              mountPath: /etc/kubetower/kubeconfig
+              readOnly: true
+            {{- end }}
+            - name: serviceaccount-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            # The root filesystem is read-only (securityContext), so every
+            # directory the console writes is a volume. Besides the state
+            # directory above, it writes two:
+            #
+            #   $HOME  the CLI caches its tools keep (~/.kube, ~/.aws/cli) and,
+            #          under the desktop profile, the assistant's configuration
+            #   /tmp   os.TempDir(): the terminal's work root
+            #          (/tmp/kubetower-<uid>, its sessions and its read-only
+            #          shims) and the per-context AWS homes (/tmp/kubetower-aws)
+            #
+            # Both start empty at every start, which is what each of them is
+            # for: nothing there is meant to outlive the process.
+            - name: home
+              mountPath: /home/kubetower
+            # CLAUDE_CONFIG_DIR. The console writes the assistant's settings
+            # there at every start, under either profile, without creating
+            # the directory first - so it has to exist, and an emptyDir
+            # mounted at it is what makes it exist on an empty $HOME.
+            - name: claude
+              mountPath: /home/kubetower/.claude
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-state" (include "kubetower.fullname" .)) }}
+          {{- else }}
+          # No PVC: the rail, the columns and the names go with the pod, and
+          # the console - told so by KT_STATE_PERSISTENT above - offers no
+          # archive and no saved setting. A drawn password cannot be what goes
+          # with it: check-persistence.yaml refuses that combination.
+          emptyDir: {}
+          {{- end }}
+        {{- if include "kubetower.kubeconfigGenerated" . }}
+        - name: kubeconfig
+          configMap:
+            name: {{ include "kubetower.fullname" . }}-kubeconfig
+            items:
+              - key: config
+                path: config
+        {{- end }}
+        - name: serviceaccount-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+                  # No audience: the default one is the API server, which is
+                  # the only thing this token is presented to.
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        # Each bounded (scratchSizeLimits): a write that runs away fills its
+        # own volume and evicts this pod, rather than the node's disk.
+        - name: home
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.home }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
+        - name: claude
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.claude }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
+        - name: tmp
+          emptyDir:
+            {{- with .Values.scratchSizeLimits.tmp }}
+            sizeLimit: {{ . }}
+            {{- else }} {}
+            {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
