@@ -1,0 +1,29 @@
+{{- /*
+Several consoles survive a voluntary disruption one at a time.
+
+Only with several replicas. With one, a PodDisruptionBudget would either
+allow the eviction anyway (maxUnavailable: 1) and say nothing, or forbid it
+(minAvailable: 1) and block every node drain until somebody deletes it - and
+one console has no other replica to keep serving meanwhile.
+
+maxUnavailable rather than minAvailable: one replica at a time whatever
+replicaCount is, where minAvailable: 1 would let four of five go together.
+
+There is deliberately none for Valkey. It is one pod, and a budget on one pod
+blocks the drain of its node outright. Its eviction signs everybody out, which
+is the cost values.yaml states beside replicaCount.
+*/ -}}
+{{- if and (include "kubetower.several" .) .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kubetower.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "kubetower.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,10 @@
+{{- /*
+Renders nothing. Nothing is refused here any more.
+
+Until chart 0.4.0 this refused persistence.enabled=false with no password
+configured, because the console then drew its password into the state
+directory and an emptyDir lost it at every restart. The chart now draws that
+password itself and gives the pod only its hash (kubetower.drawnPassword), so a
+restart keeps it whatever the state directory is. Kept as a file so that the
+history of the refusal is where a reader looks for it.
+*/ -}}

@@ -1,0 +1,9 @@
+# Helm's own build output. Nothing here is packaged yet, but the day it is,
+# `helm package` drops a .tgz next to the chart and `helm dependency update`
+# drops a lock and a charts/ subdirectory inside the chart.
+*.tgz
+charts/*/charts/
+charts/*/Chart.lock
+
+# The check installs this; it is not a dependency of the chart.
+__pycache__/

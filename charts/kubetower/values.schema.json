@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "Not a description of the values - values.yaml is that. Only what a value must never be. auth._drawnSessionSecret, auth._drawnPassword and valkey._drawnPassword are where kubetower.sessionSecret, kubetower.drawnPassword and kubetower.valkeyPassword remember what they drew for the rest of one render; set from outside, the first would skip the 32-character check, and the others would put a password or a hash of the user's choosing - an empty one included - in place of the one already in the cluster. Helm validates this before rendering, so the chart's own writes are never refused.",
+  "type": "object",
+  "properties": {
+    "auth": {
+      "type": "object",
+      "properties": {
+        "_drawnSessionSecret": false,
+        "_drawnPassword": false,
+        "trustedProxies": {
+          "$comment": "A list of addresses or CIDR ranges, or one string of them. A map or a boolean would otherwise render as text the console refuses at start, far from the value that caused it.",
+          "type": ["array", "string"],
+          "items": { "type": "string" }
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "usernamePrefix": {
+              "$comment": "Compared with \"-\" in NOTES. A boolean or a number - `--set usernamePrefix=true`, or an unquoted `no` in a values file - would otherwise fail there with an error that names no value.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "extras": {
+      "$comment": "The extra pages, by key: rendered as KT_EXTRAS, where a comma or an = would change the meaning of the list. A string - `--set extras=alfa`, without the braces - is refused here, naming the value, rather than failing inside a template with an error that names none.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+    },
+    "extraSettings": {
+      "$comment": "The extra pages' settings, page -> setting -> boolean: rendered as KT_EXTRA_SETTINGS, `<page>.<setting>=on|off`, where a dot, a comma or an = in a key would change the meaning. A key is held to the console's own pattern: 2 to 40 characters, lower-case letters, digits and inner hyphens. A string or a number in place of the boolean - `--set extraSettings.argocd.list-column=yes` - is refused here, naming the value.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$" },
+        "additionalProperties": { "type": "boolean" }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "deleteAll": {
+          "$comment": "A boolean, because it grants delete on every kind: `--set-string rbac.deleteAll=yes` or a quoted value in a values file is refused here, naming the value, rather than read by its spelling.",
+          "type": "boolean"
+        }
+      }
+    },
+    "valkey": {
+      "type": "object",
+      "properties": {
+        "_drawnPassword": false
+      }
+    }
+  }
+}

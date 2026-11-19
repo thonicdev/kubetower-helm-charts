@@ -1,0 +1,188 @@
+{{- /*
+The store several consoles share: their sessions, the confirmation plans
+between a preview and its act, and a short-lived marker per completed sign-in
+so that a sign-in code cannot be used twice. Deployed only when replicaCount
+is above one; one console keeps all three in its own memory, as it always has.
+
+Written here rather than taken from a subchart: the common one's images are no
+longer freely pullable, and what is needed is one small process with a
+password - which is less than a subchart's values file.
+
+**Nothing is written to disk.** No RDB, no AOF. Every record in it has an
+expiry of minutes or hours, and none can be read without a key Valkey never
+sees - sessions and plans are sealed by the consoles, a marker is a hash - so a
+copy on a volume would be a copy of nothing useful that outlives the thing it
+describes. The price is stated rather than hidden: a restart of this pod signs
+everybody out, as a restart of a single console does - one click each, while
+the identity provider's own session is alive.
+*/ -}}
+{{- if include "kubetower.several" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: valkey
+      port: {{ int .Values.valkey.service.port }}
+      targetPort: valkey
+      protocol: TCP
+  selector:
+    {{- include "kubetower.valkeySelectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kubetower.valkeyName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubetower.labels" . | nindent 4 }}
+spec:
+  # One. Several consoles share one store; a replicated Valkey is a Sentinel
+  # or a cluster, which the console's client is not configured for.
+  replicas: 1
+  serviceName: {{ include "kubetower.valkeyName" . }}
+  selector:
+    matchLabels:
+      {{- include "kubetower.valkeySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubetower.valkeySelectorLabels" . | nindent 8 }}
+      annotations:
+        # Restart when the configuration or the password changes. Both are read
+        # once, at start: a pod left running after either changed would serve
+        # the old one while every pod started later used the new.
+        checksum/config: {{ include (print $.Template.BasePath "/valkey-config.yaml") . | sha256sum }}
+        checksum/secret: {{ include "kubetower.valkeySecretChecksum" . }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # uid 999 / gid 1000 are the image's own `valkey` user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: config
+          image: {{ printf "%s:%s" .Values.valkey.image.repository .Values.valkey.image.tag | quote }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          # The password reaches the file without being an argument of any
+          # process: printf is a shell builtin, and od, tr and sed read it on
+          # stdin. It is written as \xHH for every byte, inside double quotes,
+          # which Valkey's configuration parser decodes - so a quote, a
+          # backslash or a newline in a Secret you supplied is carried as
+          # itself, rather than ending the line or starting a directive of its
+          # own. An empty one is refused: an empty requirepass turns
+          # authentication off - and so is an empty encoding, which is what a
+          # pipeline with a missing tool would produce, since a shell does not
+          # stop on a failure inside a pipe.
+          #
+          # And one above 16384 bytes is refused: Valkey accepts it in the file
+          # and starts, then answers every AUTH with it "Protocol error:
+          # unauthenticated bulk length" - a store no console can sign in to.
+          # Counted from the encoding, four characters a byte, so it is bytes
+          # and not characters. A NUL byte cannot reach this script: runc
+          # refuses to start a process whose environment holds one ("contains
+          # nul byte"), so such a Secret fails the start rather than arriving
+          # shortened, and there is nothing here to check.
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              [ -n "$VALKEY_PASSWORD" ] || { echo "the Valkey password is empty" >&2; exit 1; }
+              escaped=$(printf '%s' "$VALKEY_PASSWORD" | od -An -tx1 -v | tr -d ' \n' | sed 's/../\\x&/g')
+              [ -n "$escaped" ] || { echo "the Valkey password could not be encoded" >&2; exit 1; }
+              bytes=$((${#escaped} / 4))
+              [ "$bytes" -le 16384 ] || { echo "the Valkey password is $bytes bytes, and Valkey refuses to authenticate one above 16384 - use a shorter one" >&2; exit 1; }
+              umask 077
+              {
+                cat /defaults/valkey.conf
+                printf 'requirepass "%s"\n' "$escaped"
+              } > /config/valkey.conf
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubetower.valkeySecretName" . | quote }}
+                  key: {{ include "kubetower.valkeySecretKey" . | quote }}
+          securityContext:
+            {{- toYaml .Values.valkey.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: defaults
+              mountPath: /defaults
+              readOnly: true
+            - name: config
+              mountPath: /config
+      containers:
+        - name: valkey
+          image: {{ printf "%s:%s" .Values.valkey.image.repository .Values.valkey.image.tag | quote }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          command: ["valkey-server", "/config/valkey.conf"]
+          ports:
+            - name: valkey
+              containerPort: {{ int .Values.valkey.service.port }}
+              protocol: TCP
+          env:
+            # For the readiness probe's valkey-cli, which reads it from the
+            # environment rather than from its arguments.
+            - name: VALKEYCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubetower.valkeySecretName" . | quote }}
+                  key: {{ include "kubetower.valkeySecretKey" . | quote }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -p {{ int .Values.valkey.service.port }} ping | grep -q PONG
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: valkey
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.valkey.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: defaults
+          configMap:
+            name: {{ include "kubetower.valkeyName" . }}
+        # In memory: the file holds the password.
+        - name: config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: data
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.valkey.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.valkey.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
