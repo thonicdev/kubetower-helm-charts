@@ -1,16 +1,13 @@
 # Contributing
 
-## Read this first: pull requests are not being merged
+**Contributions are welcome**: issues and pull requests, from anyone, with no
+agreement to sign.
 
-**Contributions require a Contributor Licence Agreement, that document does not
-exist yet, and external contributions are not being accepted at this stage.**
-The same statement governs the console itself, whose source opens with its
-0.1.0 release; this repository is under the same licence and the same position.
-
-That is not a judgement about any contribution. It is that the project is
-AGPL-3.0-only and its copyright holder keeps the option to license it otherwise
-later, which holds only while every author has agreed to it - and the
-instrument that records that agreement has not been written.
+This chart is GNU AGPL-3.0-only, the same as the
+[console](https://github.com/thonicdev/kubetower). A contribution is offered
+under that licence, and its author keeps the copyright in it. The notice reads
+*Copyright (C) 2026 The KubeTower Authors*: everyone whose work is in the tree,
+as the git history records them.
 
 ## What is useful right now
 
@@ -32,9 +29,6 @@ documented rather than fixed, and it is the reason the chart tells you not to
 share the URL.
 
 ## If you do open a pull request
-
-It will be read, and it will sit unmerged until the CLA exists. Knowing that in
-advance is the only reason this file leads with it.
 
 - **Conventional Commits**, on every commit and on the pull-request title. The
   allowed scopes are in `commitlint.config.js`.
