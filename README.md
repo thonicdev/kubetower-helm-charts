@@ -1,7 +1,7 @@
 # KubeTower Helm chart
 
 Installs the KubeTower web console in a pod, with read-only access to the
-cluster it runs in. The console's source opens with its 0.1.0 release.
+cluster it runs in. The console's source: [thonicdev/kubetower](https://github.com/thonicdev/kubetower).
 
 ## Prerequisites
 
@@ -251,7 +251,7 @@ The settings people change most. Every other one is described in
 
 | Symptom | Fix |
 |---|---|
-| `ImagePullBackOff` | The image needs a pull secret: [docs/install.md](docs/install.md#the-image) |
+| `ImagePullBackOff` | `image.tag` names a version ghcr.io does not hold, or the nodes cannot reach ghcr.io: [docs/install.md](docs/install.md#the-image) |
 | Blank page behind an ingress | Serve the console at `/`, not under a path prefix |
 | Shell or log stream drops after a minute | Raise the ingress controller's read timeout: [docs/ingress.md](docs/ingress.md) |
 | A page says access is denied | Turn on the matching `rbac` switch: [docs/rbac.md](docs/rbac.md) |

@@ -66,11 +66,9 @@ each be a kind the console lists and a verb it writes with - or, for
 since it takes its kind at run time. The extras are
 read apart, each under its key: every request an extra makes must be granted to
 it, by a line of its own (`switch: extras.<key>`) or by a line of the console's
-that names it under `extras:`. While the console is private, CI runs it on a
-push to `main` only, reading the console with the repository
-secret `KUBETOWER_READ_TOKEN`, and **fails** where it cannot read it - a check
-that did not compare anything is not a pass. On a pull request it is skipped
-with a notice. Locally, with the console checked out beside this repository at
+that names it under `extras:`. CI runs it on every pull request and on `main`, reading the
+public console with no credential, and **fails** where it cannot read it - a
+check that did not compare anything is not a pass. Locally, with the console checked out beside this repository at
 the commit the list names:
 
 ```bash

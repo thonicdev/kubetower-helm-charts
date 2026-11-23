@@ -563,42 +563,17 @@ jobs:
       # for the list as committed and a change in the console does not turn an
       # unrelated pull request red; moving the commit is a change to the list.
       #
-      # The console's repository must be readable from here for this to run,
-      # and **where it is not, the step fails**. It used to warn NOT RUN and
-      # pass, and a check that passes without having compared anything is
-      # read as green by everybody who does not open the log.
-      #
-      # The console is private until its 0.1.0 release, so it is read with
-      # KUBETOWER_READ_TOKEN: a fine-grained token holding Contents: read on
-      # thonicdev/kubetower and nothing else, kept as a secret of this
-      # repository. The secret is referenced only by the step that runs on a
-      # push to main, never on a pull request, from a fork or not: a pull
-      # request's code never runs beside it. On a pull request the comparison
-      # is skipped, with a notice that says so; it runs on the merge to main.
-      # The token reaches git as an http.extraheader through GIT_CONFIG_*
-      # environment variables - never in a URL, a file, the checkout's config
-      # or a command line - after an empty value that clears any header
-      # already configured, and the header value is masked as well as the
-      # secret. Locally, with a checkout of the console beside this one at the
-      # commit the list names:
+      # The console's repository is public, so it is read with no credential,
+      # on every pull request as well as on main. **Where it cannot be read,
+      # the step fails**: a check that passes without having compared anything
+      # is read as green by everybody who does not open the log. Locally, with
+      # a checkout of the console beside this one at the commit the list names:
       #   python test/derive-needs.py --self-test --core ../kubetower
-      - name: the list is what the console's source asks for (skipped on a pull request)
-        if: github.event_name != 'push'
-        run: |
-          echo "::notice::console-needs.yaml was NOT compared with the console's source: the console is private and its read token is used on pushes only. The comparison runs on the merge to main; to run it now: python test/derive-needs.py --self-test --core <checkout of the console at the listed commit>"
-          echo "**Derivation not run on a pull request**: it runs on the push to main, with KUBETOWER_READ_TOKEN." >> "$GITHUB_STEP_SUMMARY"
       - name: the list is what the console's source asks for
-        if: github.event_name == 'push'
         env:
           GIT_TERMINAL_PROMPT: "0"
-          KUBETOWER_READ_TOKEN: ${{ secrets.KUBETOWER_READ_TOKEN }}
         run: |
           set -o pipefail
-          if [ -z "$KUBETOWER_READ_TOKEN" ]; then
-            echo "::error::the repository secret KUBETOWER_READ_TOKEN is missing or empty, so console-needs.yaml cannot be compared with the console's private source. Create it: a fine-grained token, Contents: read on thonicdev/kubetower only. This is a failure, not a skip."
-            echo "**Derivation FAILED - not run**: KUBETOWER_READ_TOKEN is missing." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
           if ! derived=$(python -c '
           import yaml
           d = yaml.safe_load(open("charts/kubetower/console-needs.yaml"))["derivedFrom"]
@@ -608,34 +583,16 @@ jobs:
           fi
           read -r url commit <<< "$derived"
           [ -n "$url" ] && [ -n "$commit" ] && [ "$url" != None ] && [ "$commit" != None ] || { echo "::error::console-needs.yaml names no derivedFrom repository and commit"; exit 1; }
-          auth=$(printf 'x-access-token:%s' "$KUBETOWER_READ_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          # Scoped to github.com, so the header goes nowhere else. The empty
-          # value first resets the multi-valued key, so exactly one
-          # Authorization header is sent whatever the checkout configured.
-          export GIT_CONFIG_COUNT=2
-          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0=
-          export GIT_CONFIG_KEY_1=http.https://github.com/.extraheader GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $auth"
+          git init -q "$RUNNER_TEMP/core"
           # Bounded: an unreadable repository must answer, not hang the job.
           rc=0
-          timeout 60 git ls-remote "$url" HEAD > "$RUNNER_TEMP/ls-remote.txt" 2>&1 || rc=$?
+          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit" > "$RUNNER_TEMP/fetch.txt" 2>&1 || rc=$?
           if [ $rc -ne 0 ]; then
-            sed 's/^/    /' "$RUNNER_TEMP/ls-remote.txt"
-            if [ $rc -eq 124 ]; then
-              why="git did not answer within 60 seconds"
-            elif grep -qiE 'authentication failed|not found|returned error: 40[134]|invalid username or token' "$RUNNER_TEMP/ls-remote.txt"; then
-              # A token limited to one repository answers 404 for any other,
-              # so a wrong URL and a refused token look the same from here.
-              why="GitHub refused KUBETOWER_READ_TOKEN (expired, revoked, or not granted Contents: read on it), or derivedFrom.repository is not the console's URL"
-            else
-              why="git could not read it, for the reason it gave above (not a refusal of the token)"
-            fi
-            echo "::error::$url was not read: $why. console-needs.yaml was not compared with the console's source at $commit. This is a failure, not a skip."
-            echo "**Derivation FAILED - not run**: $url was not read ($why); console-needs.yaml was not compared with the console's source at \`$commit\`." >> "$GITHUB_STEP_SUMMARY"
+            sed 's/^/    /' "$RUNNER_TEMP/fetch.txt"
+            echo "::error::$commit was not read from $url (git's answer above). console-needs.yaml was not compared with the console's source. This is a failure, not a skip."
+            echo "**Derivation FAILED - not run**: \`$commit\` was not read from $url." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          git init -q "$RUNNER_TEMP/core"
-          timeout 300 git -C "$RUNNER_TEMP/core" fetch -q --depth 1 "$url" "$commit"
           git -C "$RUNNER_TEMP/core" checkout -q FETCH_HEAD
           python test/derive-needs.py --self-test --core "$RUNNER_TEMP/core"
 

@@ -15,20 +15,11 @@ registry one works unchanged once a chart is published.
 ## The image
 
 The default is `ghcr.io/thonicdev/kubetower`, which is where the console's
-release workflow pushes one image per tag `<version>` (bare semver, such as
-`0.1.0-rc.1`), tagged the same.
-There is no `latest`. The tag defaults to the chart's `appVersion`, and while
-that is the `0.0.0-dev` placeholder **the chart refuses to render without
-`image.tag`**, rather than install an image no registry holds and leave the pod
-in `ImagePullBackOff`.
+release workflow pushes one public image per tag `<version>` (bare semver,
+such as `0.1.0`), tagged the same. No pull secret is needed.
+There is no `latest`. The tag defaults to the chart's `appVersion`.
 
-**The image is private while `thonicdev/kubetower` is**: a package on ghcr.io
-inherits its repository's access. Pulling it then needs a pull secret holding
-a token with `read:packages` from somebody who can read that repository;
-[Install](#install) shows both commands.
-
-**Building the image yourself is not available yet**: it needs the console's
-source, which opens with its 0.1.0 release. From then on:
+**Building the image yourself**, from the console's source:
 
 ```bash
 git clone https://github.com/thonicdev/kubetower && cd kubetower
@@ -64,23 +55,11 @@ whose `appVersion` is the console you want.
 The chart is an OCI artefact: `helm install` reads it directly, with no
 `helm repo add` and no clone.
 
-**1. A pull secret, while the image is private.** A classic personal access
-token with the `read:packages` scope, from an account that can read
-`thonicdev/kubetower`, in a Secret of type `kubernetes.io/dockerconfigjson`
-in the release's namespace:
-
-```bash
-kubectl create namespace kubetower
-kubectl -n kubetower create secret docker-registry ghcr-pull \
-  --docker-server=ghcr.io --docker-username=<github user> --docker-password=<token>
-```
-
-The chart's value for the pod's `imagePullSecrets` is `image.pullSecrets`.
-
-**2. A values file.** With single sign-on, which the chart is meant to run
+**1. A values file.** With single sign-on, which the chart is meant to run
 with once more than one person reaches it:
 
 ```bash
+kubectl create namespace kubetower
 # The client secret, only for a confidential client. Never a value in the file.
 kubectl -n kubetower create secret generic kubetower-oidc --from-literal=client-secret=<secret>
 ```
@@ -88,11 +67,8 @@ kubectl -n kubetower create secret generic kubetower-oidc --from-literal=client-
 ```yaml
 # kubetower-values.yaml
 image:
-  # Empty is the chart's appVersion. Required while appVersion is the
-  # 0.0.0-dev placeholder, which names no image.
+  # Empty is the chart's appVersion.
   tag: ""
-  pullSecrets:
-    - name: ghcr-pull
 
 auth:
   oidc:
@@ -115,7 +91,7 @@ only way in is the provider. The other single sign-on values -
 `sessionMax` - are described in `values.yaml`, and the name a RoleBinding has
 to use is in [Single sign-on](single-sign-on.md).
 
-**3. Install:**
+**2. Install:**
 
 ```bash
 helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower --version <chart version> \
