@@ -14,20 +14,6 @@ may not, and its own log names them.
 {{- else }} With the shared password, whoever holds it gets
 everything this pod's role grants, and nothing records who they were.
 {{- end }}
-{{- if hasPrefix "ghcr.io/thonicdev/" .Values.image.repository }}
-
-THE IMAGE IS PRIVATE while thonicdev/kubetower is: a package on ghcr.io inherits
-its repository's access. If the pod stays in ImagePullBackOff, the nodes need a
-token with read:packages from somebody who can read that repository:
-
-  kubectl --context <your-context> -n {{ .Release.Namespace }} create secret docker-registry ghcr-pull \
-    --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
-
-and then --set image.pullSecrets[0].name=ghcr-pull on the next upgrade.
-{{- if .Values.image.pullSecrets }} This release names
-{{ len .Values.image.pullSecrets }} pull Secret(s) already.
-{{- end }}
-{{- end }}
 
 {{- if and (include "kubetower.extrasInExtraEnv" .) .Values.extras }}
 

@@ -489,11 +489,25 @@ def scan_file(scan, rel, text):
             scan.write_verbs.add((m.group(1), m.group(2)))
 
 
+# An action of internal/actions that writes one fixed kind of custom resource,
+# named by a constant `<Name>Kind = "<plural>.<group>"` (Argo CD's Refresh): it
+# reads the object (edit.Live, a get) and patches it (edit.Send, a dry run then
+# the change). Not a kind the console lists, so not among the writes on listed
+# kinds below.
+ACTION_KIND = re.compile(r'^\s*\w+Kind\s*=\s*"([a-z0-9-]+)\.([a-z0-9.-]+)"', re.M)
+
+
 def scan_core(core):
     scan = Scan()
     for rel, path in go_files(core):
         with open(path, encoding="utf-8") as f:
-            scan_file(scan, rel, f.read())
+            text = f.read()
+        scan_file(scan, rel, text)
+        if rel.startswith("internal/actions/") and not rel.endswith("_test.go"):
+            for m in ACTION_KIND.finditer(text):
+                where = f"{rel}:{text.count(chr(10), 0, m.start()) + 1}"
+                for verb in ("get", "patch"):
+                    scan.add(m.group(2), m.group(1), verb, where)
         scan.files += 1
     if scan.files == 0 or not scan.listed or not scan.native:
         print(f"read {scan.files} Go files under {core} and found no list page or no kind in {NATIVE_FILE} - "
@@ -526,6 +540,12 @@ HOST_METHODS = {
     # Prometheus: found among the Services, asked through the service proxy,
     # or through a port-forward when the proxy is refused.
     "UsageWindow": [("", "services", "list"), ("", "services/proxy", "get")] + FORWARD,
+    # CoreDNS: its pods, found across the namespaces, then its metrics from
+    # Prometheus the same way as UsageWindow.
+    "DNSWindow": [("", "pods", "list"), ("", "services", "list"), ("", "services/proxy", "get")] + FORWARD,
+    # Argo CD's refresh: the Application read, then the one annotation patched
+    # (a dry run first, then the change).
+    "RefreshApplication": [("argoproj.io", "applications", "get"), ("argoproj.io", "applications", "patch")],
     # The kubelets' stats, through the node proxy.
     "Usage": [("", "nodes/proxy", "get")],
     # One key of one Secret, or one Service, that the console's own
@@ -582,6 +602,7 @@ EXTRA_GVRS = {
         "crd.projectcalico.org/networkpolicies", "crd.projectcalico.org/globalnetworkpolicies",
         "policy.networking.k8s.io/adminnetworkpolicies", "policy.networking.k8s.io/baselineadminnetworkpolicies"],
     ("extras/netinspect/read.go", "g.GVR()"): ["cilium.io/ciliumcidrgroups"],
+    ("extras/netinspect/read.go", "t.GVR()"): ["crd.projectcalico.org/tiers"],
     ("extras/netinspect/read.go", "k.crd.GVR()"): [
         "cilium.io/ciliumnetworkpolicies", "cilium.io/ciliumclusterwidenetworkpolicies"],
     # Gatekeeper's constraint kinds are made by its templates, so there is no

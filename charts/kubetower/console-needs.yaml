@@ -69,7 +69,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: dd4b6c84efad27ab7d751e87af15e8f6cd37e2bc
+  commit: b555d19f2b244fe43bb3f9c2c42bb2c81b148f18
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -83,9 +83,9 @@ needs:
 
   # The list pages, one per kind (internal/resources/kinds.go and fetch.go), and
   # the drawer's get of one object of any of them (internal/detail/detail.go).
-  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, events, jvm, kubeadjust, kubecron, netinspect, pending, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, dns, events, jvm, kubeadjust, kubecron, netinspect, pending, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
-  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, cnpg, jvm, kubeadjust, kubecron, netinspect, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, cnpg, dns, jvm, kubeadjust, kubecron, netinspect, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], extras: [kubeadjust, netinspect, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], extras: [events, kubeadjust, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
@@ -96,7 +96,7 @@ needs:
   - {switch: rbac.read, group: "", resource: serviceaccounts, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: resourcequotas, verbs: [get, list], extras: [pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: limitranges, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: configmaps, verbs: [get, list], extras: [events, netinspect], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: configmaps, verbs: [get, list], extras: [dns, events, netinspect], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: deployments, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: daemonsets, verbs: [get, list], extras: [kubeadjust, netinspect], source: "internal/resources/fetch.go; internal/detail/detail.go"}
@@ -171,6 +171,9 @@ needs:
   # ServiceAccounts in every namespace, and a pod can run as any ServiceAccount
   # in its namespace.
   - {switch: rbac.write, group: "", resource: pods, verbs: [create, patch, delete], source: "internal/actions/needs.go (delete, restart of a pod); internal/edit"}
+  # Argo CD's Refresh (extras.argocd): the Application read, then its one
+  # refresh annotation patched. A write, so it rides on rbac.write.
+  - {switch: rbac.write, group: argoproj.io, resource: applications, verbs: [get, patch], extras: [argocd], source: "internal/actions/refresh.go; internal/web/hostrefresh.go"}
   - {switch: rbac.write, group: "", resource: services, verbs: [create, patch, delete], source: "internal/edit"}
   - {switch: rbac.write, group: "", resource: configmaps, verbs: [create, patch, delete], source: "internal/edit"}
   - {switch: rbac.write, group: "", resource: secrets, verbs: [create, patch, delete], source: "internal/edit"}
@@ -218,7 +221,7 @@ needs:
   # the service proxy is refused. `get` is the WebSocket upgrade's verb; see the
   # top of this file.
   - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create, get], extras: [cnpg, jvm], source: "internal/terminal/exec.go"}
-  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], extras: [argocd, cnpg, jvm, kubeadjust, kubecron, netinspect, redis], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
+  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], extras: [argocd, cnpg, dns, jvm, kubeadjust, kubecron, netinspect, redis], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
 
   # Prometheus, through the API server's service proxy
   # (/api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The console only
@@ -229,7 +232,7 @@ needs:
   # cluster network. The chart cannot know where Prometheus runs, so the
   # narrowing is yours: rbac.prometheusProxyServices names the Services, in the
   # `<name>:<port>` form the console requests, as resourceNames.
-  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, extras: [jvm, kubeadjust], source: "internal/metrics/prom.go"}
+  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, extras: [dns, jvm, kubeadjust], source: "internal/metrics/prom.go"}
 
   # The kubelet's own stats API, through the API server's node proxy. It is a
   # proxy to every kubelet on every node - a far wider capability than the page
@@ -285,6 +288,7 @@ needs:
   - {switch: extras.netinspect, group: cilium.io, resource: ciliumnetworkpolicies, verbs: [list], source: "extras/netinspect/read.go"}
   - {switch: extras.netinspect, group: crd.projectcalico.org, resource: globalnetworkpolicies, verbs: [list], source: "extras/netinspect/read.go"}
   - {switch: extras.netinspect, group: crd.projectcalico.org, resource: networkpolicies, verbs: [list], source: "extras/netinspect/read.go"}
+  - {switch: extras.netinspect, group: crd.projectcalico.org, resource: tiers, verbs: [list], source: "extras/netinspect/read.go"}
   - {switch: extras.netinspect, group: policy.networking.k8s.io, resource: adminnetworkpolicies, verbs: [list], source: "extras/netinspect/read.go"}
   - {switch: extras.netinspect, group: policy.networking.k8s.io, resource: baselineadminnetworkpolicies, verbs: [list], source: "extras/netinspect/read.go"}
   # security: trivy-operator's reports (workload, cluster-scoped, SBOM, RBAC

@@ -34,20 +34,13 @@
 
 image:
   # What the console's release workflow publishes: one image per tag
-  # <version> (bare semver, `0.1.0-rc.1`), at
-  # ghcr.io/thonicdev/kubetower:<version>, built from the
-  # repository's Dockerfile and stamped with that version. There is no
-  # `latest`.
-  #
-  # **Private while thonicdev/kubetower is**: a package inherits its
-  # repository's access, so until the repository is public, pulling needs a
-  # token with `read:packages` from somebody who can read it, in a Secret named
-  # under pullSecrets below. NOTES says so on every install.
+  # <version> (bare semver, `0.1.0`), at ghcr.io/thonicdev/kubetower:<version>,
+  # public, built from the repository's Dockerfile and stamped with that
+  # version. There is no `latest`.
   repository: ghcr.io/thonicdev/kubetower
-  # Empty means the chart's appVersion. While that is the 0.0.0-dev
-  # placeholder the render is refused, because no registry holds that image:
-  # set a published version here, or your own build's tag with your own
-  # repository above.
+  # Empty means the chart's appVersion: the console release this chart was
+  # made for. Set another published version here, or your own build's tag with
+  # your own repository above.
   tag: ""
   # IfNotPresent: a version tag is never moved, so a node that has it has the
   # right one - and a locally built image the node can already see (kind after
