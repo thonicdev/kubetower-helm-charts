@@ -2,15 +2,10 @@
 
 ## Release status
 
-**Not a release yet.** The console's release workflow publishes an image for
-each version tag, at `ghcr.io/thonicdev/kubetower:<version>`, and this
-repository's publishes the chart for each chart tag, at
-`oci://ghcr.io/thonicdev/charts/kubetower`. The console has release
-candidates and no release yet, and no chart has been published: the first
-chart waits for the first console release, since a chart naming no released
-image installs nothing. Until then you install from this checkout, naming the
-image version; [Install](#install) has both ways, and the
-registry one works unchanged once a chart is published.
+The console's release workflow publishes an image for each version tag, at
+`ghcr.io/thonicdev/kubetower:<version>`, and this repository's publishes the
+chart for each chart tag, at `oci://ghcr.io/thonicdev/charts/kubetower`. Both
+are public. [Install](#install) has the registry way and the checkout way.
 
 ## The image
 
@@ -106,8 +101,8 @@ holds only its hash; the console draws no password and prints none in its log.
 
 ### From a checkout
 
-Until a chart version is published, or to install a change of your own, the
-same values file works from this repository:
+To install a change of your own, the same values file works from this
+repository:
 
 ```bash
 helm install kubetower ./charts/kubetower \

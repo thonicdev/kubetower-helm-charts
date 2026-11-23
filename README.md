@@ -20,14 +20,11 @@ Install:
 
 ```bash
 helm install kubetower oci://ghcr.io/thonicdev/charts/kubetower \
-  --namespace kubetower --create-namespace \
-  --set image.tag=0.1.0-rc.4
+  --namespace kubetower --create-namespace
 ```
 
-Add `--version <x.y.z>` to pin a chart version.
-
-The OCI chart exists once a release is published; until then this answers
-`not found`, and [docs/install.md](docs/install.md) installs from a checkout.
+Add `--version <x.y.z>` to pin a chart version. The console version it
+installs is the chart's `appVersion`.
 
 Open the console:
 
