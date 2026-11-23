@@ -118,12 +118,12 @@ EXTRA_GRANTS = {
 
 # The extras that read nothing of their own: what they need is rbac.read's,
 # and naming one must not add a rule.
-NOTHING_OF_THEIR_OWN = ("kubecron", "redis", "jvm", "pending", "events")
+NOTHING_OF_THEIR_OWN = ("kubecron", "redis", "runtime", "pending", "events")
 
 # Every extra the console carries: the role is asserted to grant EXTRA_GRANTS
 # when all are named.
-ALL_EXTRAS = ("argocd", "certmanager", "cnpg", "events", "jvm", "kubeadjust",
-              "kubecron", "netinspect", "pending", "redis", "security")
+ALL_EXTRAS = ("argocd", "certmanager", "cnpg", "events", "kubeadjust",
+              "kubecron", "netinspect", "pending", "redis", "runtime", "security")
 
 # The chart refuses to render without an image it can name; the tag is
 # irrelevant to the role.

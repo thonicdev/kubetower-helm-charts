@@ -59,7 +59,7 @@ EVERYTHING_ON = [
     "rbac.customResources=true", "rbac.readSecrets=true", "rbac.metrics=true",
     "rbac.prometheusProxy=true", "rbac.deleteAll=true",
     # Every extra the console carries, so their own grants are checked too.
-    "extras={argocd,certmanager,cnpg,events,jvm,kubeadjust,kubecron,netinspect,pending,redis,security}",
+    "extras={argocd,certmanager,cnpg,events,kubeadjust,kubecron,netinspect,pending,redis,runtime,security}",
 ]
 
 
