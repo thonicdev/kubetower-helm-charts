@@ -212,6 +212,9 @@ ABS_PATH_LISTED = {
 NOT_A_WATCH = {
     # The console's own update check, re-asked on a timer; not the cluster.
     ("internal/launch/run.go", "p.updates"),
+    # The kubeconfig files, read again every few seconds when they change
+    # (cluster.Manager.Watch); a local file, not the cluster.
+    ("internal/launch/run.go", "clusters"),
 }
 
 ARGS = r'\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)'   # a call's arguments, two levels of nesting
