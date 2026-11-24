@@ -70,7 +70,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: fc8da1dc905303b0d304772df167619e20da3b31
+  commit: 70eef6a8fb78430938db9444a634948755f2feb1
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A

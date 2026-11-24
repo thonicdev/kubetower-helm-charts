@@ -274,6 +274,18 @@ def check(chart, needs):
         for grant in sorted(grants):
             print(f"        {key} changes the role: {name(grant)}")
 
+    # `jvm` was runtime's key before console 0.2.0 and the console still reads
+    # it: values that name it get the role that naming runtime gives.
+    legacy = granted(render(chart, defaults, ("jvm",)))
+    current = granted(render(chart, defaults, ("runtime",)))
+    every_legacy = granted(render(chart, defaults, tuple("jvm" if k == "runtime" else k for k in ALL_EXTRAS)))
+    bad = legacy != current or every_legacy != with_extras
+    ok = ok and not bad
+    print(f"{'FAIL' if bad else 'ok  '}  extras: [jvm] - the role of extras: [runtime], "
+          f"{len(legacy ^ current) + len(every_legacy ^ with_extras)} rule(s) apart")
+    for grant in sorted((legacy ^ current) | (every_legacy ^ with_extras)):
+        print(f"        jvm and runtime differ on: {name(grant)}")
+
     # rbac.deleteAll, on its own terms: off, no rule deletes on a wildcard; on,
     # exactly one rule more than the defaults, and it is `delete` on `*` in `*`.
     wild = {"apiGroups": ["*"], "resources": ["*"], "verbs": ["delete"]}
