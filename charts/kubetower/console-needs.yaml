@@ -49,9 +49,10 @@
 # `group` is the API group, "" for the core group.
 #
 # **The extras.** The console compiles in extra pages (extras/ in its source:
-# argocd, certmanager, cnpg, events, jvm, kubeadjust, kubecron, netinspect, pending,
-# redis, security), each off until `extras` in values.yaml
-# names it. What an extra reads is listed two ways:
+# argocd, certmanager, cnpg, events, kubeadjust, kubecron, netinspect, pending,
+# redis, runtime, security; runtime was jvm before 0.2.0, and `jvm` in `extras`
+# still turns it on), each off until `extras` in values.yaml names it. What
+# an extra reads is listed two ways:
 #
 #   switch: extras.<key>   a request only that extra makes. Granted when
 #                          `extras` names the key, and only then - whatever
@@ -69,7 +70,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: fc8da1dc905303b0d304772df167619e20da3b31
+  commit: efc58c2f50f82dc6fa0b5444d3aacdafcd388f4b
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -83,9 +84,9 @@ needs:
 
   # The list pages, one per kind (internal/resources/kinds.go and fetch.go), and
   # the drawer's get of one object of any of them (internal/detail/detail.go).
-  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, dns, events, jvm, kubeadjust, kubecron, netinspect, pending, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, dns, events, kubeadjust, kubecron, netinspect, pending, redis, runtime, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
-  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, cnpg, dns, jvm, kubeadjust, kubecron, netinspect, redis, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, cnpg, dns, kubeadjust, kubecron, netinspect, redis, runtime, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], extras: [kubeadjust, netinspect, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], extras: [events, kubeadjust, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
@@ -143,7 +144,7 @@ needs:
   # The CPU and memory columns. Answers only where metrics-server is installed;
   # where it is not, the console says "no metrics backend", which is a different
   # fact from being refused. Lists only: nothing asks for one object's figures.
-  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], extras: [jvm, kubeadjust], source: "internal/metrics/usage.go; internal/metrics/container.go; internal/overview/metrics.go"}
+  - {switch: rbac.metrics, group: metrics.k8s.io, resource: pods, verbs: [list], extras: [kubeadjust, runtime], source: "internal/metrics/usage.go; internal/metrics/container.go; internal/overview/metrics.go"}
   - {switch: rbac.metrics, group: metrics.k8s.io, resource: nodes, verbs: [list], source: "internal/metrics/usage.go"}
 
   # Every custom resource in the cluster, read-only.
@@ -220,8 +221,8 @@ needs:
   # Prometheus (internal/metrics/tunnel.go) when rbac.prometheusProxy is off or
   # the service proxy is refused. `get` is the WebSocket upgrade's verb; see the
   # top of this file.
-  - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create, get], extras: [cnpg, jvm], source: "internal/terminal/exec.go"}
-  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], extras: [argocd, cnpg, dns, jvm, kubeadjust, kubecron, netinspect, redis], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
+  - {switch: rbac.exec, group: "", resource: pods/exec, verbs: [create, get], extras: [cnpg, runtime], source: "internal/terminal/exec.go"}
+  - {switch: rbac.exec, group: "", resource: pods/portforward, verbs: [create, get], extras: [argocd, cnpg, dns, kubeadjust, kubecron, netinspect, redis, runtime], source: "internal/forward/forward.go; internal/terminal/portforward.go"}
 
   # Prometheus, through the API server's service proxy
   # (/api/v1/namespaces/<ns>/services/<name>:<port>/proxy/...). The console only
@@ -232,7 +233,7 @@ needs:
   # cluster network. The chart cannot know where Prometheus runs, so the
   # narrowing is yours: rbac.prometheusProxyServices names the Services, in the
   # `<name>:<port>` form the console requests, as resourceNames.
-  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, extras: [dns, jvm, kubeadjust], source: "internal/metrics/prom.go"}
+  - {switch: rbac.prometheusProxy, group: "", resource: services/proxy, verbs: [get], resourceNamesFrom: prometheusProxyServices, extras: [dns, kubeadjust, runtime], source: "internal/metrics/prom.go"}
 
   # The kubelet's own stats API, through the API server's node proxy. It is a
   # proxy to every kubelet on every node - a far wider capability than the page

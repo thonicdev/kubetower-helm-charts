@@ -78,11 +78,12 @@ leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;
 NOTES says so when both are set.
 
 **`extras` also decides what the role grants the extra pages.** The console
-carries eleven: `argocd`, `certmanager`, `cnpg`, `events`, `jvm`, `kubeadjust`,
-`kubecron`, `netinspect`, `pending`, `redis` and `security`. What each reads
-is in `charts/kubetower/console-needs.yaml`; the ClusterRole grants an extra's
-own reads only while `extras` names it - the role follows `extras`, not a
-`KT_EXTRAS` set through `extraEnv`, so a page turned on that way alone is
+carries eleven: `argocd`, `certmanager`, `cnpg`, `events`, `kubeadjust`,
+`kubecron`, `netinspect`, `pending`, `redis`, `runtime` and `security`.
+`runtime` was `jvm` before console 0.2.0; `extras: [jvm]` still turns it on.
+What each reads is in `charts/kubetower/console-needs.yaml`; the ClusterRole
+grants an extra's own reads only while `extras` names it - the role follows
+`extras`, not a `KT_EXTRAS` set through `extraEnv`, so a page turned on that way alone is
 refused by the cluster. Reads of kinds the console shows anyway stay behind
 `rbac.read`, and anything stronger stays behind its own switch: naming an
 extra never grants a Secret, a port-forward or a proxy.
@@ -94,11 +95,11 @@ extra never grants a Secret, a port-forward or a proxy.
 | `certmanager` | `list` cert-manager Certificates, CertificateRequests, Issuers, ClusterIssuers; ACME Orders and Challenges | `rbac.read` for Ingresses and the CRD catalogue |
 | `cnpg` | `list` CloudNativePG Clusters, Backups, ScheduledBackups, Poolers, Databases, Publications, Subscriptions | `rbac.read` for Pods, Events and the CRD catalogue; `rbac.exec` for the SQL tunnel and replication-lag commands; `rbac.readSecrets` for the connection Secret; `rbac.nodeProxy` for disk figures |
 | `events` | nothing of its own: Events, ReplicaSets, ConfigMaps, Pods and Nodes are `rbac.read`'s | - |
-| `jvm` | nothing of its own: Pods and Services are `rbac.read`'s | `rbac.exec` for `jcmd` and the tunnel to a JVM; `rbac.metrics` for usage; `rbac.prometheusProxy` for history |
 | `kubecron` | nothing of its own: CronJobs, Jobs, Pods and Services are `rbac.read`'s | `rbac.exec` for the tunnel to its collector; `rbac.readSecrets` when the collector asks for a token |
 | `netinspect` | `list` Cilium network policies and CIDR groups; Calico, AdminNetworkPolicy and BaselineAdminNetworkPolicy kinds, counted only | `rbac.read` for NetworkPolicies, DaemonSets, Pods, Services, Namespaces and the CRD catalogue; `rbac.exec` for the tunnel to Hubble |
 | `pending` | nothing of its own: Pods, Nodes, Events, PersistentVolumes(Claims), StorageClasses and ResourceQuotas are `rbac.read`'s | - |
 | `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
+| `runtime` (formerly `jvm`) | nothing of its own: Pods and Services are `rbac.read`'s | `rbac.exec` for `jcmd`, the tunnels to pprof and the Node.js inspector; `rbac.metrics` for usage; `rbac.prometheusProxy` for history |
 | `security` | `list` trivy-operator reports (vulnerability, config audit, exposed secret, infra assessment, RBAC assessment, SBOM, compliance, and their cluster-scoped kinds); PolicyReports (`wgpolicyk8s.io`, `openreports.io`); Kyverno policies, including `ImageValidatingPolicy` and the two `Namespaced*` policy kinds; Gateway API HTTPRoutes and GRPCRoutes | `rbac.read` for Pods, Services, workloads and Ingresses; `rbac.customResources` for Gatekeeper constraints, whose kinds its templates create |
 
 ## Settings of the extra pages: `extraSettings`
