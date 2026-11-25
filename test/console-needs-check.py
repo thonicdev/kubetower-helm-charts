@@ -47,8 +47,10 @@ question, not this one's.
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -118,12 +120,15 @@ EXTRA_GRANTS = {
 
 # The extras that read nothing of their own: what they need is rbac.read's,
 # and naming one must not add a rule.
-NOTHING_OF_THEIR_OWN = ("kubecron", "redis", "runtime", "pending", "events")
+NOTHING_OF_THEIR_OWN = ("dns", "kubecron", "redis", "runtime", "pending", "events")
 
 # Every extra the console carries: the role is asserted to grant EXTRA_GRANTS
 # when all are named.
-ALL_EXTRAS = ("argocd", "certmanager", "cnpg", "events", "kubeadjust",
+ALL_EXTRAS = ("argocd", "certmanager", "cnpg", "dns", "events", "kubeadjust",
               "kubecron", "netinspect", "pending", "redis", "runtime", "security")
+
+# runtime's key before console 0.2.0, which the console still reads.
+ALIASES = {"jvm": "runtime"}
 
 # The chart refuses to render without an image it can name; the tag is
 # irrelevant to the role.
@@ -165,7 +170,7 @@ def switch_on(switch, rbac, extras=()):
     if switch == "always":
         return True
     if switch.startswith("extras."):
-        return switch.removeprefix("extras.") in extras
+        return switch.removeprefix("extras.") in {ALIASES.get(k, k) for k in extras}
     key = switch.removeprefix("rbac.")
     if key == switch or key not in rbac:
         raise SystemExit(f"the list names the switch {switch!r}, which is not a value under rbac")
@@ -275,14 +280,18 @@ def check(chart, needs):
             print(f"        {key} changes the role: {name(grant)}")
 
     # `jvm` was runtime's key before console 0.2.0 and the console still reads
-    # it: values that name it get the role that naming runtime gives.
+    # it: values that name it get the role that naming runtime gives. runtime
+    # has no line of its own today, so the same comparison is also made on a
+    # copy of the chart given one (PROBE), which only the alias can grant.
     legacy = granted(render(chart, defaults, ("jvm",)))
     current = granted(render(chart, defaults, ("runtime",)))
     every_legacy = granted(render(chart, defaults, tuple("jvm" if k == "runtime" else k for k in ALL_EXTRAS)))
-    bad = legacy != current or every_legacy != with_extras
+    probe = probe_grants(chart, defaults)
+    bad = legacy != current or every_legacy != with_extras or probe != (True, True, False)
     ok = ok and not bad
     print(f"{'FAIL' if bad else 'ok  '}  extras: [jvm] - the role of extras: [runtime], "
-          f"{len(legacy ^ current) + len(every_legacy ^ with_extras)} rule(s) apart")
+          f"{len(legacy ^ current) + len(every_legacy ^ with_extras)} rule(s) apart; a runtime-only line "
+          f"granted under runtime {probe[0]}, under jvm {probe[1]}, under neither {probe[2]}")
     for grant in sorted((legacy ^ current) | (every_legacy ^ with_extras)):
         print(f"        jvm and runtime differ on: {name(grant)}")
 
@@ -312,6 +321,27 @@ def check(chart, needs):
     for grant in sorted(leaked):
         print(f"        granted while its switch is off: {name(grant)}")
     return ok
+
+
+# A line only runtime asks for, added to a copy of the chart by probe_grants.
+PROBE = {"switch": "extras.runtime", "group": "probe.kubetower.dev", "resource": "probes",
+         "verbs": ["list"], "source": "test/console-needs-check.py"}
+
+
+def probe_grants(chart, defaults, extras=(("runtime",), ("jvm",), ())):
+    """Whether a copy of the chart whose list carries PROBE grants it, for
+    each `extras` given: (runtime, jvm, neither) by default."""
+    grant = (PROBE["group"], PROBE["resource"], PROBE["verbs"][0], ())
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = os.path.join(tmp, "kubetower")
+        shutil.copytree(chart, copy)
+        path = os.path.join(copy, "console-needs.yaml")
+        with open(path, encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
+        doc["needs"].append(PROBE)
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f)
+        return tuple(grant in granted(render(copy, defaults, e)) for e in extras)
 
 
 def self_test():

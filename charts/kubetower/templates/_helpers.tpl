@@ -270,17 +270,20 @@ Whether a switch in console-needs.yaml is on: "true" or "false".
 
 `always` is always on. `extras.<key>` is on when `extras` names the key - the
 list itself, whether or not extraEnv's KT_EXTRAS overrides what the console
-turns on. Any other switch is `rbac.<key>`, read from the rbac values, and a
-key that does not exist there is refused rather than read as off - a misspelt
-switch would otherwise drop its grants without a word. `rbac.readSecrets`
-applies only with `rbac.read`, as values.yaml says.
+turns on. `jvm`, runtime's key before console 0.2.0, which the console still
+reads, turns `extras.runtime` on. Any other switch is `rbac.<key>`, read from
+the rbac values, and a key that does not exist there is refused rather than
+read as off - a misspelt switch would otherwise drop its grants without a
+word. `rbac.readSecrets` applies only with `rbac.read`, as values.yaml says.
 */}}
 {{- define "kubetower.rbacSwitch" -}}
 {{- $switch := .switch -}}
 {{- if eq $switch "always" -}}
 true
 {{- else if hasPrefix "extras." $switch -}}
-{{- has (trimPrefix "extras." $switch) (.extras | default list) | toString -}}
+{{- $key := trimPrefix "extras." $switch -}}
+{{- $extras := .extras | default list -}}
+{{- or (has $key $extras) (and (eq $key "runtime") (has "jvm" $extras)) | toString -}}
 {{- else -}}
 {{- $key := trimPrefix "rbac." $switch -}}
 {{- if or (eq $key $switch) (not (hasKey .rbac $key)) -}}
