@@ -49,10 +49,10 @@
 # `group` is the API group, "" for the core group.
 #
 # **The extras.** The console compiles in extra pages (extras/ in its source:
-# argocd, certmanager, cnpg, events, kubeadjust, kubecron, netinspect, pending,
-# redis, runtime, security; runtime was jvm before 0.2.0, and `jvm` in `extras`
-# still turns it on), each off until `extras` in values.yaml names it. What
-# an extra reads is listed two ways:
+# argocd, certmanager, cnpg, dns, events, kubeadjust, kubecron, netinspect,
+# pending, redis, runtime, security; runtime was jvm before 0.2.0, and `jvm` in
+# `extras` still turns it on and grants what `runtime` does), each off until
+# `extras` in values.yaml names it. What an extra reads is listed two ways:
 #
 #   switch: extras.<key>   a request only that extra makes. Granted when
 #                          `extras` names the key, and only then - whatever
