@@ -116,6 +116,9 @@ EXTRA_GRANTS = {
     ('wgpolicyk8s.io', 'clusterpolicyreports', "list", ()),
     ('wgpolicyk8s.io', 'policyreports', "list", ()),
     ("apps", "controllerrevisions", "list", ()),
+    ("snapshot.storage.k8s.io", "volumesnapshotclasses", "list", ()),
+    ("snapshot.storage.k8s.io", "volumesnapshotcontents", "list", ()),
+    ("snapshot.storage.k8s.io", "volumesnapshots", "list", ()),
 }
 
 # The extras that read nothing of their own: what they need is rbac.read's,
@@ -125,7 +128,8 @@ NOTHING_OF_THEIR_OWN = ("dns", "kubecron", "redis", "runtime", "pending", "event
 # Every extra the console carries: the role is asserted to grant EXTRA_GRANTS
 # when all are named.
 ALL_EXTRAS = ("argocd", "certmanager", "cnpg", "dns", "events", "kubeadjust",
-              "kubecron", "netinspect", "pending", "redis", "runtime", "security")
+              "kubecron", "netinspect", "pending", "redis", "runtime", "security",
+              "storage")
 
 # runtime's key before console 0.2.0, which the console still reads.
 ALIASES = {"jvm": "runtime"}

@@ -78,9 +78,9 @@ leaves `extras` out, as it does for `GOMEMLIMIT` and `auth.trustedProxies`;
 NOTES says so when both are set.
 
 **`extras` also decides what the role grants the extra pages.** The console
-carries twelve: `argocd`, `certmanager`, `cnpg`, `dns`, `events`,
-`kubeadjust`, `kubecron`, `netinspect`, `pending`, `redis`, `runtime` and
-`security`. `runtime` was `jvm` before console 0.2.0; `extras: [jvm]` still
+carries thirteen: `argocd`, `certmanager`, `cnpg`, `dns`, `events`,
+`kubeadjust`, `kubecron`, `netinspect`, `pending`, `redis`, `runtime`,
+`security` and `storage`. `runtime` was `jvm` before console 0.2.0; `extras: [jvm]` still
 turns it on, and grants what `extras: [runtime]` grants. What each reads is in
 `charts/kubetower/console-needs.yaml`; the ClusterRole grants an extra's own
 reads only while `extras` names it - the role follows `extras`, not a
@@ -102,6 +102,7 @@ extra never grants a Secret, a port-forward or a proxy.
 | `pending` | nothing of its own: Pods, Nodes, Events, PersistentVolumes(Claims), StorageClasses and ResourceQuotas are `rbac.read`'s | - |
 | `redis` | nothing of its own: Services, EndpointSlices and Pods are `rbac.read`'s | `rbac.exec` for the tunnel to Redis; `rbac.readSecrets` for a password kept in a Secret |
 | `runtime` (formerly `jvm`) | nothing of its own: Pods and Services are `rbac.read`'s | `rbac.exec` for `jcmd`, the tunnels to pprof and the Node.js inspector; `rbac.metrics` for usage; `rbac.prometheusProxy` or `rbac.exec` for history |
+| `storage` | `list` CSI VolumeSnapshots, VolumeSnapshotContents and VolumeSnapshotClasses | `rbac.read` for PersistentVolumes, PersistentVolumeClaims, StorageClasses, the Pods and StatefulSets that mount them, and the CRD catalogue; `rbac.nodeProxy` for how full each mounted claim is |
 | `security` | `list` trivy-operator reports (vulnerability, config audit, exposed secret, infra assessment, RBAC assessment, SBOM, compliance, and their cluster-scoped kinds); PolicyReports (`wgpolicyk8s.io`, `openreports.io`); Kyverno policies, including `ImageValidatingPolicy` and the two `Namespaced*` policy kinds; Gateway API HTTPRoutes and GRPCRoutes | `rbac.read` for Pods, Services, workloads and Ingresses; `rbac.customResources` for Gatekeeper constraints, whose kinds its templates create |
 
 ## Settings of the extra pages: `extraSettings`
