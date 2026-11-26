@@ -232,7 +232,10 @@ rbac:
   # the form the console asks for, e.g. prometheus-server:80. In a ClusterRole
   # a name matches in every namespace. Empty grants the proxy to every
   # Service. The console reaches Prometheus only through a Service it found,
-  # so name the one your cluster runs.
+  # so name the one your cluster runs. VictoriaMetrics is reached the same
+  # way (console 0.2.2): name vmsingle's or vmselect's Service, e.g.
+  # vmselect-main:8481; a path such as /select/0/prometheus, which
+  # KT_PROMETHEUS_SERVICE may carry, is not part of the name.
   prometheusProxyServices: []
 
 # ---------------------------------------------------------------------------

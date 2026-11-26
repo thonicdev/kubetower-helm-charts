@@ -50,7 +50,7 @@
 #
 # **The extras.** The console compiles in extra pages (extras/ in its source:
 # argocd, certmanager, cnpg, dns, events, kubeadjust, kubecron, netinspect,
-# pending, redis, runtime, security; runtime was jvm before 0.2.0, and `jvm` in
+# pending, redis, runtime, security, storage; runtime was jvm before 0.2.0, and `jvm` in
 # `extras` still turns it on and grants what `runtime` does), each off until
 # `extras` in values.yaml names it. What an extra reads is listed two ways:
 #
@@ -70,7 +70,7 @@
 
 derivedFrom:
   repository: https://github.com/thonicdev/kubetower
-  commit: efc58c2f50f82dc6fa0b5444d3aacdafcd388f4b
+  commit: 48b488e026c57ecfb98baa63cfe2f2ed64932ad4
 
 needs:
   # Asked before every write, exec and forward, about the person signed in. A
@@ -84,22 +84,22 @@ needs:
 
   # The list pages, one per kind (internal/resources/kinds.go and fetch.go), and
   # the drawer's get of one object of any of them (internal/detail/detail.go).
-  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, dns, events, kubeadjust, kubecron, netinspect, pending, redis, runtime, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: pods, verbs: [get, list], extras: [argocd, cnpg, dns, events, kubeadjust, kubecron, netinspect, pending, redis, runtime, security, storage], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: pods/log, verbs: [get], source: "internal/logs/logs.go"}
   - {switch: rbac.read, group: "", resource: services, verbs: [get, list], extras: [argocd, cnpg, dns, kubeadjust, kubecron, netinspect, redis, runtime, security], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: endpoints, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: namespaces, verbs: [get, list], extras: [kubeadjust, netinspect, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: nodes, verbs: [get, list], extras: [events, kubeadjust, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: events, verbs: [get, list], extras: [argocd, cnpg, events, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], extras: [kubeadjust, pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: "", resource: persistentvolumes, verbs: [get, list], extras: [pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumeclaims, verbs: [get, list], extras: [kubeadjust, pending, storage], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: "", resource: persistentvolumes, verbs: [get, list], extras: [pending, storage], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: replicationcontrollers, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: serviceaccounts, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: resourcequotas, verbs: [get, list], extras: [pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: limitranges, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: "", resource: configmaps, verbs: [get, list], extras: [dns, events, netinspect], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: deployments, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], extras: [kubeadjust], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: apps, resource: statefulsets, verbs: [get, list], extras: [kubeadjust, storage], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: apps, resource: daemonsets, verbs: [get, list], extras: [kubeadjust, netinspect], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   # Also the rollout history (internal/changes/changes.go).
   - {switch: rbac.read, group: apps, resource: replicasets, verbs: [get, list], extras: [events, kubeadjust, security], source: "internal/resources/fetch.go; internal/detail/detail.go; internal/changes/changes.go"}
@@ -123,11 +123,11 @@ needs:
   - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterroles, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: rolebindings, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   - {switch: rbac.read, group: rbac.authorization.k8s.io, resource: clusterrolebindings, verbs: [get, list], source: "internal/resources/fetch.go; internal/detail/detail.go"}
-  - {switch: rbac.read, group: storage.k8s.io, resource: storageclasses, verbs: [get, list], extras: [pending], source: "internal/resources/fetch.go; internal/detail/detail.go"}
+  - {switch: rbac.read, group: storage.k8s.io, resource: storageclasses, verbs: [get, list], extras: [pending, storage], source: "internal/resources/fetch.go; internal/detail/detail.go"}
   # The CRD list, which is how the console knows what custom resources exist and
   # which columns to render. Reading the definitions does not grant reading the
   # objects; that is rbac.customResources below.
-  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [get, list], extras: [argocd, certmanager, cnpg, netinspect, security], source: "internal/customresources/customresources.go; internal/customresources/native.go (get)"}
+  - {switch: rbac.read, group: apiextensions.k8s.io, resource: customresourcedefinitions, verbs: [get, list], extras: [argocd, certmanager, cnpg, netinspect, security, storage], source: "internal/customresources/customresources.go; internal/customresources/native.go (get)"}
 
   # Secrets, and this is the line to think about before the others.
   #
@@ -238,7 +238,7 @@ needs:
   # The kubelet's own stats API, through the API server's node proxy. It is a
   # proxy to every kubelet on every node - a far wider capability than the page
   # that uses it needs to imply.
-  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], extras: [cnpg, kubeadjust], source: "internal/kubeletstats/kubeletstats.go"}
+  - {switch: rbac.nodeProxy, group: "", resource: nodes/proxy, verbs: [get], extras: [cnpg, kubeadjust, storage], source: "internal/kubeletstats/kubeletstats.go"}
 
   # The extras' own requests: the custom resources of the tools they show.
   # Each is a list and nothing else - an extra reads through the console's
@@ -322,3 +322,10 @@ needs:
   - {switch: extras.security, group: policies.kyverno.io, resource: validatingpolicies, verbs: [list], source: "extras/security/policyread.go"}
   - {switch: extras.security, group: wgpolicyk8s.io, resource: clusterpolicyreports, verbs: [list], source: "extras/security/policyread.go"}
   - {switch: extras.security, group: wgpolicyk8s.io, resource: policyreports, verbs: [list], source: "extras/security/policyread.go"}
+  # storage: CSI snapshots, read where the snapshot CRDs are installed (the CRD
+  # catalogue above says whether they are). Volumes, claims, classes, the pods
+  # and StatefulSets that mount them are rbac.read's; how full a mounted claim
+  # is comes from the kubelet, through rbac.nodeProxy.
+  - {switch: extras.storage, group: snapshot.storage.k8s.io, resource: volumesnapshotclasses, verbs: [list], source: "extras/storage/snapshots.go"}
+  - {switch: extras.storage, group: snapshot.storage.k8s.io, resource: volumesnapshotcontents, verbs: [list], source: "extras/storage/snapshots.go"}
+  - {switch: extras.storage, group: snapshot.storage.k8s.io, resource: volumesnapshots, verbs: [list], source: "extras/storage/snapshots.go"}
